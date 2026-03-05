@@ -1,10 +1,11 @@
 import { getDb } from "./db";
 import { callClaude } from "./claude";
 import { EXTRACTION_PROMPT } from "./prompts";
+import { getLearnerContext } from "./learner-profile";
 
-const BATCH_SIZE = 10;
-const CONCURRENCY = 3;
-const DELAY_BETWEEN_MS = 200;
+const BATCH_SIZE = 3;
+const CONCURRENCY = 1;
+const DELAY_BETWEEN_MS = 2000;
 
 interface ExtractedItem {
   chunk_id: number;
@@ -18,6 +19,9 @@ interface ExtractedItem {
 
 export async function processAllChunks(jobId: number, userId: number): Promise<void> {
   const db = getDb();
+
+  // Load combined learner profile (manual + LLM-imported)
+  const learnerProfile = getLearnerContext(userId);
 
   // Only process chunks belonging to this user's files
   const unprocessedChunks = db
@@ -73,7 +77,7 @@ export async function processAllChunks(jobId: number, userId: number): Promise<v
     const concurrentBatches = batches.slice(i, i + CONCURRENCY);
 
     const results = await Promise.allSettled(
-      concurrentBatches.map((batch) => extractFromBatch(batch))
+      concurrentBatches.map((batch) => extractFromBatch(batch, learnerProfile))
     );
 
     for (let j = 0; j < results.length; j++) {
@@ -137,7 +141,8 @@ export async function processAllChunks(jobId: number, userId: number): Promise<v
 }
 
 async function extractFromBatch(
-  chunks: Array<{ id: number; content: string; file_id: number; start_seconds: number | null; end_seconds: number | null }>
+  chunks: Array<{ id: number; content: string; file_id: number; start_seconds: number | null; end_seconds: number | null }>,
+  learnerProfile: string
 ): Promise<
   Array<{
     chunkId: number;
@@ -159,7 +164,7 @@ async function extractFromBatch(
     })
     .join("\n\n");
 
-  const response = await callClaude(EXTRACTION_PROMPT(combinedContent));
+  const response = await callClaude(EXTRACTION_PROMPT(combinedContent, learnerProfile));
 
   // Try to extract JSON from the response (handle markdown code blocks)
   let jsonStr = response;

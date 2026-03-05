@@ -8,8 +8,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+import { TopicSearch } from "@/components/topic-search";
+import { JournalSearch } from "@/components/journal-search";
+import { useAppView } from "@/components/app-shell";
 
-type InputMode = "youtube" | "file";
+type InputMode = "youtube" | "file" | "topic" | "journal";
+
+interface ReaderState {
+  open: boolean;
+  loading: boolean;
+  title: string;
+  url: string | null;
+  content: string;
+}
 
 export function UploadTab() {
   const { files, uploading, error, uploadFiles, deleteFile, deleteAllFiles, fetchFiles } =
@@ -17,9 +28,17 @@ export function UploadTab() {
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [reingestingId, setReingestingId] = useState<number | null>(null);
   const [reingestingAll, setReingestingAll] = useState(false);
+  const [reader, setReader] = useState<ReaderState>({
+    open: false,
+    loading: false,
+    title: "",
+    url: null,
+    content: "",
+  });
   const { status, startProcessing, reset } = useProcessingStatus();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const { askAboutFile } = useAppView();
   const [mode, setMode] = useState<InputMode>("youtube");
 
   useEffect(() => {
@@ -105,6 +124,25 @@ export function UploadTab() {
     }
   }, [fetchFiles]);
 
+  const openReader = useCallback(async (fileId: number) => {
+    setReader((r) => ({ ...r, open: true, loading: true, content: "", title: "", url: null }));
+    try {
+      const res = await fetch(`/api/files/${fileId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load");
+      setReader({
+        open: true,
+        loading: false,
+        title: data.title,
+        url: data.url,
+        content: data.content,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to load content");
+      setReader((r) => ({ ...r, open: false, loading: false }));
+    }
+  }, []);
+
   const totalChunks = files.reduce((sum, f) => sum + (f.chunk_count || 0), 0);
   const totalSize = files.reduce((sum, f) => sum + (f.size_bytes || 0), 0);
   const isProcessing =
@@ -141,10 +179,42 @@ export function UploadTab() {
           </svg>
           Upload Files
         </button>
+        <button
+          onClick={() => setMode("topic")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            mode === "topic"
+              ? "bg-background shadow-sm text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          Topic Search
+        </button>
+        <button
+          onClick={() => setMode("journal")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            mode === "journal"
+              ? "bg-background shadow-sm text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          </svg>
+          Journal Articles
+        </button>
       </div>
 
       {/* YouTube input mode */}
       {mode === "youtube" && <YouTubeInput onIngested={fetchFiles} />}
+
+      {/* Topic search mode */}
+      {mode === "topic" && <TopicSearch onIngested={fetchFiles} />}
+
+      {/* Journal article search mode */}
+      {mode === "journal" && <JournalSearch onIngested={fetchFiles} />}
 
       {/* File upload mode */}
       {mode === "file" && (
@@ -339,13 +409,18 @@ export function UploadTab() {
             {files.map((file) => (
               <div
                 key={file.id}
-                className="flex items-center justify-between py-2.5 px-4 rounded-lg bg-card border border-border hover:border-primary/30 transition-colors group"
+                onClick={() => file.source_type === "article" ? openReader(file.id) : undefined}
+                className={`flex items-center justify-between py-2.5 px-4 rounded-lg bg-card border border-border hover:border-primary/30 transition-colors group ${file.source_type === "article" ? "cursor-pointer" : ""}`}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
                     {file.source_type === "youtube" ? (
                       <svg className="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+                      </svg>
+                    ) : file.source_type === "article" ? (
+                      <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                       </svg>
                     ) : (
                       <svg className="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -367,10 +442,22 @@ export function UploadTab() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  {(file.status === "completed" || file.status === "chunked") && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); askAboutFile(file.id); }}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all"
+                      title="Ask AI about this material"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                      </svg>
+                      Ask AI
+                    </button>
+                  )}
                   <StatusBadge status={file.status} />
                   {file.source_type === "youtube" && (
                     <button
-                      onClick={() => handleReingest(file.id)}
+                      onClick={(e) => { e.stopPropagation(); handleReingest(file.id); }}
                       disabled={isProcessing || reingestingId !== null}
                       className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
                       title="Re-ingest with timestamps"
@@ -388,7 +475,7 @@ export function UploadTab() {
                     </button>
                   )}
                   <button
-                    onClick={() => deleteFile(file.id)}
+                    onClick={(e) => { e.stopPropagation(); deleteFile(file.id); }}
                     disabled={isProcessing}
                     className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all"
                   >
@@ -453,6 +540,73 @@ export function UploadTab() {
                 <p className="text-xs text-muted-foreground leading-relaxed">{s.desc}</p>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {/* Article reader modal */}
+      {reader.open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          onClick={() => setReader((r) => ({ ...r, open: false }))}
+        >
+          <div
+            className="bg-background border border-border rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900 flex items-center justify-center shrink-0">
+                  <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                  </svg>
+                </div>
+                <h2 className="text-sm font-semibold truncate">{reader.title || "Loading..."}</h2>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {reader.url && (
+                  <a
+                    href={reader.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                    Open original
+                  </a>
+                )}
+                <button
+                  onClick={() => setReader((r) => ({ ...r, open: false }))}
+                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              {reader.loading ? (
+                <div className="flex items-center justify-center py-16">
+                  <svg className="w-6 h-6 animate-spin text-primary" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+              ) : (
+                <article className="prose prose-sm dark:prose-invert max-w-none">
+                  {reader.content.split("\n\n").map((paragraph, i) => (
+                    <p key={i} className="text-sm leading-relaxed text-foreground/90 mb-4">
+                      {paragraph}
+                    </p>
+                  ))}
+                </article>
+              )}
+            </div>
           </div>
         </div>
       )}

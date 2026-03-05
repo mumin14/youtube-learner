@@ -5,6 +5,7 @@ import { useChat } from "@/hooks/use-chat";
 import { Button } from "@/components/ui/button";
 import { YouTubePlayer } from "@/components/youtube-player";
 import { ChatHistorySidebar } from "@/components/chat-history-sidebar";
+import { useAppView } from "@/components/app-shell";
 import type { ConversationSummary } from "@/types";
 
 /** Strip markdown syntax from plain text */
@@ -74,11 +75,17 @@ interface SourceFile {
 }
 
 export function AskAiTab() {
+  const { focusFileId, clearFocusFile } = useAppView();
   const [selectedFileId, setSelectedFileId] = useState<number | undefined>(undefined);
   const [sourceFiles, setSourceFiles] = useState<SourceFile[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [input, setInput] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const [attachment, setAttachment] = useState<{ filename: string; text: string } | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const refreshConversations = useCallback(() => {
@@ -100,6 +107,7 @@ export function AskAiTab() {
     fileId: selectedFileId,
     conversationId: activeConversationId,
     onConversationUpdate,
+    attachmentText: attachment?.text,
   });
 
   useEffect(() => {
@@ -115,6 +123,15 @@ export function AskAiTab() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // When navigating from upload tab with "Ask AI" button
+  useEffect(() => {
+    if (focusFileId !== null) {
+      setSelectedFileId(focusFileId);
+      setActiveConversationId(null);
+      clearFocusFile();
+    }
+  }, [focusFileId, clearFocusFile]);
 
   const handleNewChat = () => {
     setActiveConversationId(null);
@@ -137,6 +154,66 @@ export function AskAiTab() {
     sendMessage(trimmed);
   };
 
+  const toggleListening = useCallback(() => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let transcript = "";
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      setInput(transcript);
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
+  }, [isListening]);
+
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/parse-attachment", { method: "POST", body: formData });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Failed to parse file");
+        return;
+      }
+      const data = await res.json();
+      setAttachment({ filename: data.filename, text: data.text });
+    } catch {
+      alert("Failed to upload file");
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -145,7 +222,7 @@ export function AskAiTab() {
   };
 
   return (
-    <div className="flex h-[650px] gap-3">
+    <div className="flex h-full gap-3 overflow-hidden">
       {/* Chat history sidebar */}
       <ChatHistorySidebar
         conversations={conversations}
@@ -156,7 +233,7 @@ export function AskAiTab() {
       />
 
       {/* Chat area */}
-      <div className="flex flex-col flex-1 min-w-0">
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Messages area */}
         <div
           ref={scrollRef}
@@ -238,7 +315,7 @@ export function AskAiTab() {
         </div>
 
         {/* Input area */}
-        <div className="mt-4">
+        <div className="mt-4 shrink-0">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <label htmlFor="source-select" className="text-xs text-muted-foreground">Source:</label>
@@ -263,26 +340,87 @@ export function AskAiTab() {
               </button>
             )}
           </div>
+          {attachment && (
+            <div className="flex items-center gap-2 mb-2 px-1">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 text-xs font-medium">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                {attachment.filename}
+                <button
+                  onClick={() => setAttachment(null)}
+                  className="ml-1 hover:text-blue-900"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="relative">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,.txt"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Ask anything about your content..."
-              className="w-full resize-none rounded-full border border-border bg-card pl-5 pr-14 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all placeholder:text-muted-foreground/50 min-h-[48px] max-h-[120px] shadow-sm"
+              className="w-full resize-none rounded-full border border-border bg-card pl-12 pr-24 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all placeholder:text-muted-foreground/50 min-h-[48px] max-h-[120px] shadow-sm"
               rows={1}
               disabled={isLoading}
             />
-            <Button
-              type="submit"
-              disabled={isLoading || !input.trim()}
-              size="icon"
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full w-8 h-8 bg-coral text-coral-foreground hover:bg-coral/90"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-              </svg>
-            </Button>
+            <div className="absolute left-2 top-1/2 -translate-y-1/2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="rounded-full w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-all disabled:opacity-50"
+                title="Attach PDF, Word, or text file"
+              >
+                {isUploading ? (
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={toggleListening}
+                className={`rounded-full w-8 h-8 flex items-center justify-center transition-all ${
+                  isListening
+                    ? "bg-red-500 text-white animate-pulse"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+                title={isListening ? "Stop listening" : "Voice input"}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+              </button>
+              <Button
+                type="submit"
+                disabled={isLoading || !input.trim()}
+                size="icon"
+                className="rounded-full w-8 h-8 bg-coral text-coral-foreground hover:bg-coral/90"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                </svg>
+              </Button>
+            </div>
           </form>
         </div>
       </div>

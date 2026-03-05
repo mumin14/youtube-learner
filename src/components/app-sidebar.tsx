@@ -5,6 +5,7 @@ import {
   Upload,
   ClipboardCheck,
   MessageCircle,
+  Settings,
   ChevronDown,
   CreditCard,
   LogOut,
@@ -17,6 +18,7 @@ const NAV_ITEMS: { view: AppView; label: string; icon: typeof Upload }[] = [
   { view: "upload", label: "Upload", icon: Upload },
   { view: "action-items", label: "Action Items", icon: ClipboardCheck },
   { view: "ask-ai", label: "Ask AI", icon: MessageCircle },
+  { view: "learner-settings", label: "Learner Settings", icon: Settings },
 ];
 
 interface AppSidebarProps {

@@ -1,5 +1,8 @@
-export function EXTRACTION_PROMPT(chunkedContent: string): string {
-  return `You are an expert learning coach analyzing YouTube video transcripts. Extract specific, actionable learning items from the following transcript chunks.
+export function EXTRACTION_PROMPT(chunkedContent: string, learnerProfile?: string): string {
+  const profileSection = learnerProfile?.trim()
+    ? `\n\n<learner_profile>\nBefore generating action items, you MUST read and internalize the following learner profile. Every action item you produce must be shaped by this profile — match the learner's preferred style, depth, pacing, and format. Write descriptions the way this person learns best:\n\n${learnerProfile}\n</learner_profile>\n`
+    : "";
+  return `You are an expert learning coach analyzing YouTube video transcripts. Extract specific, actionable learning items from the following transcript chunks.${profileSection}
 
 For each learning item, categorize its difficulty:
 
@@ -42,21 +45,19 @@ Respond with this exact JSON structure:
 }`;
 }
 
-export function ASK_AI_SYSTEM_PROMPT(relevantChunks: string): string {
-  return `You are a knowledgeable learning assistant. The user has uploaded YouTube video transcripts and wants to learn from them.
-
-You have access to the following relevant excerpts from their uploaded transcripts:
+export function ASK_AI_SYSTEM_PROMPT(relevantChunks: string, learnerProfile?: string): string {
+  const profileSection = learnerProfile?.trim()
+    ? `\n\nYou MUST personalize every response using this learner profile. Speak in a way that matches how they learn — use their preferred explanation style, depth, pacing, and format. Make them feel like you were built specifically for them:\n\n${learnerProfile}\n`
+    : "";
+  return `You are a personal learning assistant.${profileSection}Answer based on this context from the user's uploaded content:
 
 <context>
 ${relevantChunks}
 </context>
 
-Instructions:
-- Answer the user's question based primarily on the provided context
-- If the context does not contain enough information to fully answer, say so clearly and provide what you can
-- Reference specific videos/sources when possible
-- When context includes video timestamps (indicated by [Timestamp: Xs-Ys] or video_id info), reference them so the user can jump to the exact moment. Use this exact format: **[Watch at MM:SS](video_id:abc123,t:154)**
-- Be pedagogical: explain concepts clearly, use examples, and suggest follow-up learning steps
-- If the user asks something completely unrelated to the content, politely redirect them
-- IMPORTANT: Do NOT use markdown formatting. No ** for bold, no ## for headers, no bullet points with -. Write in plain conversational text. Use line breaks to separate paragraphs. The only exception is the **[Watch at ...]** timestamp format above.`;
+Rules:
+- Answer from context. If insufficient, say so.
+- For video timestamps, use: **[Watch at MM:SS](video_id:abc123,t:154)**
+- No markdown (no **, ##, -). Plain text only. Exception: the Watch at format above.
+- Be clear, use examples, suggest next steps.`;
 }

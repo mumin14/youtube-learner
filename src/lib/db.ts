@@ -181,6 +181,56 @@ function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
   `);
 
+  // Learning notes & AI assessments
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS learning_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action_item_id INTEGER NOT NULL REFERENCES action_items(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS assessments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      note_id INTEGER NOT NULL REFERENCES learning_notes(id) ON DELETE CASCADE,
+      action_item_id INTEGER NOT NULL REFERENCES action_items(id) ON DELETE CASCADE,
+      score INTEGER NOT NULL CHECK(score BETWEEN 0 AND 100),
+      grade TEXT NOT NULL,
+      strengths TEXT NOT NULL DEFAULT '[]',
+      improvements TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_learning_notes_action_item ON learning_notes(action_item_id);
+    CREATE INDEX IF NOT EXISTS idx_learning_notes_user ON learning_notes(user_id);
+    CREATE INDEX IF NOT EXISTS idx_assessments_note ON assessments(note_id);
+    CREATE INDEX IF NOT EXISTS idx_assessments_action_item ON assessments(action_item_id);
+  `);
+
+  // Learner profiles — stores user's learning preferences
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS learner_profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      profile_text TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_learner_profiles_user ON learner_profiles(user_id);
+  `);
+
+  // Add llm_profile_text column to learner_profiles (safe to run multiple times)
+  const lpCols = db.prepare("PRAGMA table_info(learner_profiles)").all() as { name: string }[];
+  const lpColNames = lpCols.map((c) => c.name);
+  if (!lpColNames.includes("llm_profile_text")) {
+    db.exec(`ALTER TABLE learner_profiles ADD COLUMN llm_profile_text TEXT NOT NULL DEFAULT ''`);
+  }
+  if (!lpColNames.includes("llm_updated_at")) {
+    db.exec(`ALTER TABLE learner_profiles ADD COLUMN llm_updated_at TEXT`);
+  }
+
   // Create FTS5 table separately (can't use IF NOT EXISTS with virtual tables in all versions)
   try {
     db.exec(`

@@ -6,7 +6,7 @@ export interface FileRecord {
   chunk_count: number;
   status: "uploaded" | "chunked" | "processing" | "completed" | "error";
   error_message: string | null;
-  source_type: "file" | "youtube";
+  source_type: "file" | "youtube" | "article";
   youtube_url: string | null;
   video_id: string | null;
   share_token: string | null;
@@ -51,8 +51,9 @@ export interface ActionItem {
   created_at: string;
   // joined fields
   filename?: string;
-  source_type?: "file" | "youtube";
+  source_type?: "file" | "youtube" | "article";
   video_id?: string | null;
+  youtube_url?: string | null;
   chunk_start_seconds?: number | null;
   chunk_end_seconds?: number | null;
 }
@@ -128,6 +129,26 @@ export interface ConversationSummary {
   file_id: number | null;
   updated_at: string;
   message_count: number;
+}
+
+export interface LearningNote {
+  id: number;
+  action_item_id: number;
+  user_id: number;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Assessment {
+  id: number;
+  note_id: number;
+  action_item_id: number;
+  score: number;
+  grade: string;
+  strengths: string[];
+  improvements: string[];
+  created_at: string;
 }
 
 export interface Message {

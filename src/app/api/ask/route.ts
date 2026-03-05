@@ -1,17 +1,19 @@
 import { NextRequest } from "next/server";
 import { retrieveRelevantChunks } from "@/lib/retriever";
 import { ASK_AI_SYSTEM_PROMPT } from "@/lib/prompts";
-import { getClient } from "@/lib/claude";
+import { getGroqClient } from "@/lib/claude";
 import { requireAuth } from "@/lib/auth";
+import { getLearnerContext } from "@/lib/learner-profile";
 
 export async function POST(req: NextRequest) {
   const user = requireAuth(req);
   if (!user) {
     return new Response("Unauthorized", { status: 401 });
   }
-  const { messages, fileId } = (await req.json()) as {
+  const { messages, fileId, attachmentText } = (await req.json()) as {
     messages: Array<{ role: "user" | "assistant"; content: string }>;
     fileId?: number;
+    attachmentText?: string;
   };
 
   if (!messages?.length) {
@@ -21,53 +23,63 @@ export async function POST(req: NextRequest) {
   const latestUserMessage =
     messages.filter((m) => m.role === "user").pop()?.content ?? "";
 
-  const chunks = retrieveRelevantChunks(latestUserMessage, user.id, 15, 12000, fileId);
+  // Load combined learner profile (manual + LLM-imported)
+  const learnerProfile = getLearnerContext(user.id);
 
-  if (chunks.length === 0) {
+  const chunks = retrieveRelevantChunks(latestUserMessage, user.id, 6, 3000, fileId);
+
+  const attachmentSection = attachmentText
+    ? `\n\n--- ATTACHED DOCUMENT ---\n${attachmentText}\n--- END ATTACHED DOCUMENT ---`
+    : "";
+
+  if (chunks.length === 0 && !attachmentText) {
     const contextText =
       "No relevant content was found in the uploaded transcripts for this query.";
-    return streamResponse(messages, ASK_AI_SYSTEM_PROMPT(contextText));
+    return streamResponse(messages, ASK_AI_SYSTEM_PROMPT(contextText, learnerProfile));
   }
 
-  const contextText = chunks
-    .map((c, i) => {
-      const timeInfo = c.startSeconds != null
-        ? ` [Timestamp: ${formatSeconds(c.startSeconds)}-${formatSeconds(c.endSeconds ?? c.startSeconds)}]`
-        : "";
-      const videoInfo = c.videoId ? ` (video_id:${c.videoId})` : "";
-      return `[${i + 1}] (from "${c.filename}"${videoInfo}${timeInfo}):\n${c.content}`;
-    })
-    .join("\n\n---\n\n");
+  const chunksText = chunks.length > 0
+    ? chunks
+        .map((c, i) => {
+          const timeInfo = c.startSeconds != null
+            ? ` [Timestamp: ${formatSeconds(c.startSeconds)}-${formatSeconds(c.endSeconds ?? c.startSeconds)}]`
+            : "";
+          const videoInfo = c.videoId ? ` (video_id:${c.videoId})` : "";
+          return `[${i + 1}] (from "${c.filename}"${videoInfo}${timeInfo}):\n${c.content}`;
+        })
+        .join("\n\n---\n\n")
+    : "No transcript content found.";
 
-  return streamResponse(messages, ASK_AI_SYSTEM_PROMPT(contextText));
+  return streamResponse(messages, ASK_AI_SYSTEM_PROMPT(chunksText + attachmentSection, learnerProfile));
 }
 
 async function streamResponse(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
   systemPrompt: string
 ) {
-  const client = getClient();
+  const groq = getGroqClient();
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        const response = client.messages.stream({
-          model: "claude-sonnet-4-20250514",
+        const response = await groq.chat.completions.create({
+          model: "llama-3.1-8b-instant",
           max_tokens: 4096,
-          system: systemPrompt,
-          messages: messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
+          stream: true,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...messages.map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content,
+            })),
+          ],
         });
 
-        for await (const event of response) {
-          if (
-            event.type === "content_block_delta" &&
-            event.delta.type === "text_delta"
-          ) {
-            controller.enqueue(encoder.encode(event.delta.text));
+        for await (const chunk of response) {
+          const text = chunk.choices[0]?.delta?.content;
+          if (text) {
+            controller.enqueue(encoder.encode(text));
           }
         }
       } catch (error) {

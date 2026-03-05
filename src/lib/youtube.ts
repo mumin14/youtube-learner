@@ -300,6 +300,59 @@ export async function getChannelVideos(
   return { channelName, videos };
 }
 
+export async function searchVideos(
+  query: string
+): Promise<YouTubeVideo[]> {
+  const yt = await getYt();
+
+  // Search for full courses first, then general results
+  const courseQuery = `${query} full course`;
+  const [courseResults, generalResults] = await Promise.all([
+    yt.search(courseQuery, { type: "video", sort_by: "relevance" }),
+    yt.search(query, { type: "video", sort_by: "relevance" }),
+  ]);
+
+  const seen = new Set<string>();
+  const videos: YouTubeVideo[] = [];
+
+  const extract = (results: typeof courseResults) => {
+    if (!results.results) return;
+    for (const item of results.results) {
+      if (item.type !== "Video") continue;
+      const v = item as unknown as {
+        id: string;
+        title: { text?: string };
+        thumbnails?: { url: string }[];
+        duration?: { text?: string };
+      };
+      if (!v.id || seen.has(v.id)) continue;
+      seen.add(v.id);
+      videos.push({
+        videoId: v.id,
+        title: v.title?.text || `Video ${v.id}`,
+        thumbnail: v.thumbnails?.[0]?.url || "",
+        duration: v.duration?.text || "",
+      });
+    }
+  };
+
+  extract(courseResults);
+  extract(generalResults);
+
+  // Sort: longer videos first (courses tend to be longer)
+  videos.sort((a, b) => {
+    const parseDuration = (d: string) => {
+      const parts = d.split(":").map(Number);
+      if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+      if (parts.length === 2) return parts[0] * 60 + parts[1];
+      return 0;
+    };
+    return parseDuration(b.duration) - parseDuration(a.duration);
+  });
+
+  return videos.slice(0, 20);
+}
+
 export async function searchChannels(
   query: string
 ): Promise<{ channelName: string; videos: YouTubeVideo[] }> {

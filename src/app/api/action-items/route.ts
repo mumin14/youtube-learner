@@ -10,13 +10,14 @@ export async function GET(req: NextRequest) {
   const difficulty = req.nextUrl.searchParams.get("difficulty");
   const topic = req.nextUrl.searchParams.get("topic");
   const review = req.nextUrl.searchParams.get("review");
+  const completedOnly = req.nextUrl.searchParams.get("completed");
 
   const db = getDb();
 
   const fileId = req.nextUrl.searchParams.get("fileId");
 
   let query = `
-    SELECT ai.*, f.original_name as filename, f.source_type, f.video_id,
+    SELECT ai.*, f.original_name as filename, f.source_type, f.video_id, f.youtube_url,
       c.start_seconds as chunk_start_seconds, c.end_seconds as chunk_end_seconds
     FROM action_items ai
     JOIN files f ON f.id = ai.file_id AND f.user_id = ?
@@ -40,6 +41,10 @@ export async function GET(req: NextRequest) {
   if (fileId) {
     query += ` AND ai.file_id = ?`;
     params.push(fileId);
+  }
+
+  if (completedOnly === "true") {
+    query += ` AND ai.completed = 1`;
   }
 
   if (review === "true") {
