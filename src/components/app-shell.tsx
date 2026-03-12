@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 
-export type AppView = "upload" | "action-items" | "ask-ai" | "learner-settings";
+export type AppView = "upload" | "action-items" | "library" | "ask-ai" | "learner-settings";
 
 interface AppViewContextValue {
   activeView: AppView;

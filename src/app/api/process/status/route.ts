@@ -2,10 +2,16 @@ import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 
+interface AuthUser {
+  id: number;
+  email: string;
+}
+
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  if (!requireAuth(req)) {
+  const user = requireAuth(req) as AuthUser | null;
+  if (!user) {
     return new Response("Unauthorized", { status: 401 });
   }
   const jobId = req.nextUrl.searchParams.get("jobId");
@@ -43,7 +49,7 @@ export async function GET(req: NextRequest) {
         }
       };
 
-      interval = setInterval(() => {
+      interval = setInterval(() => {  // poll every 1s (was 500ms)
         try {
           const job = db
             .prepare("SELECT * FROM processing_jobs WHERE id = ?")
@@ -61,6 +67,13 @@ export async function GET(req: NextRequest) {
             return;
           }
 
+          const itemCount = db
+            .prepare(
+              `SELECT COUNT(*) as count FROM action_items
+               WHERE file_id IN (SELECT id FROM files WHERE user_id = ?)`
+            )
+            .get(user.id) as { count: number };
+
           sendEvent({
             status: job.status,
             totalChunks: job.total_chunks,
@@ -72,6 +85,7 @@ export async function GET(req: NextRequest) {
                   )
                 : 0,
             error: job.error_message,
+            itemsFound: itemCount.count,
           });
 
           if (job.status === "completed" || job.status === "error") {
@@ -86,7 +100,7 @@ export async function GET(req: NextRequest) {
             // already closed
           }
         }
-      }, 500);
+      }, 1000);
 
       // Safety timeout — 5 minutes (reduced from 10)
       safetyTimeout = setTimeout(() => {

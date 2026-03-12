@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import {
   Upload,
   ClipboardCheck,
+  Library,
   MessageCircle,
   Settings,
   ChevronDown,
@@ -17,6 +18,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 const NAV_ITEMS: { view: AppView; label: string; icon: typeof Upload }[] = [
   { view: "upload", label: "Upload", icon: Upload },
   { view: "action-items", label: "Action Items", icon: ClipboardCheck },
+  { view: "library", label: "Library", icon: Library },
   { view: "ask-ai", label: "Ask AI", icon: MessageCircle },
   { view: "learner-settings", label: "Learner Settings", icon: Settings },
 ];
@@ -73,16 +75,17 @@ export function AppSidebar({ expanded }: AppSidebarProps) {
       {/* Logo */}
       <div className="px-5 py-5 flex items-center gap-2 h-[60px]">
         {expanded ? (
-          <h1 className="text-lg font-bold text-foreground whitespace-nowrap">
-            YouTube <span className="text-coral">Learner</span>
-          </h1>
+          <img
+            src="/logo.png"
+            alt="Socraty AI"
+            className="h-7 dark:invert"
+          />
         ) : (
-          <div className="w-6 h-6 mx-auto">
-            <svg viewBox="0 0 24 24" fill="none" className="w-6 h-6">
-              <path d="M12 2L2 7l10 5 10-5-10-5z" fill="currentColor" className="text-coral" />
-              <path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-foreground" />
-            </svg>
-          </div>
+          <img
+            src="/mascot.png"
+            alt="Socraty AI"
+            className="w-8 h-8 mx-auto object-contain"
+          />
         )}
       </div>
 

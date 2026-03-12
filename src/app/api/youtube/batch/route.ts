@@ -27,6 +27,16 @@ export async function POST(req: NextRequest) {
       };
 
       const db = getDb();
+
+      // Skip videos already in the database
+      const existingStmt = db.prepare(
+        `SELECT video_id FROM files WHERE video_id = ? AND user_id = ?`
+      );
+      const newVideoIds = videoIds.filter(
+        (id) => !existingStmt.get(id, userId)
+      );
+      const skippedCount = videoIds.length - newVideoIds.length;
+
       const insertFile = db.prepare(
         `INSERT INTO files (filename, original_name, size_bytes, status, source_type, youtube_url, video_id, user_id)
          VALUES (?, ?, ?, 'chunked', 'youtube', ?, ?, ?)`
@@ -38,20 +48,36 @@ export async function POST(req: NextRequest) {
         `UPDATE files SET chunk_count = ? WHERE id = ?`
       );
 
-      let completed = 0;
-      let succeeded = 0;
+      let completed = skippedCount;
+      let succeeded = skippedCount;
       let failed = 0;
+      const total = videoIds.length;
 
-      for (const videoId of videoIds) {
+      if (skippedCount > 0) {
+        send({
+          status: "processing",
+          completed,
+          total,
+          progress: Math.round((completed / total) * 100),
+          message: `${skippedCount} video(s) already ingested, skipping`,
+        });
+      }
+
+      // Process sequentially with delay to avoid YouTube rate limits
+      const DELAY_BETWEEN_MS = 1500;
+
+      for (let i = 0; i < newVideoIds.length; i++) {
+        const videoId = newVideoIds[i];
+
+        send({
+          status: "processing",
+          videoId,
+          completed,
+          total,
+          progress: Math.round((completed / total) * 100),
+        });
+
         try {
-          send({
-            status: "processing",
-            videoId,
-            completed,
-            total: videoIds.length,
-            progress: Math.round((completed / videoIds.length) * 100),
-          });
-
           const { text, title, segments } = await fetchTranscript(videoId);
 
           if (!text.trim()) {
@@ -63,53 +89,52 @@ export async function POST(req: NextRequest) {
               title,
               error: "Empty transcript",
               completed,
-              total: videoIds.length,
+              total,
             });
-            continue;
+          } else {
+            const safeName = `yt-${videoId}`;
+            const ytUrl = `https://youtube.com/watch?v=${videoId}`;
+            const info = insertFile.run(
+              safeName,
+              title,
+              Buffer.byteLength(text),
+              ytUrl,
+              videoId,
+              userId
+            );
+            const fileId = info.lastInsertRowid as number;
+
+            const chunks = segments.length > 0
+              ? chunkTranscriptSegments(segments, title)
+              : chunkText(text, title);
+
+            const tx = db.transaction(() => {
+              for (let j = 0; j < chunks.length; j++) {
+                insertChunk.run(
+                  fileId,
+                  j,
+                  chunks[j].content,
+                  chunks[j].tokenEstimate,
+                  chunks[j].startSeconds ?? null,
+                  chunks[j].endSeconds ?? null
+                );
+              }
+              updateFileChunks.run(chunks.length, fileId);
+            });
+            tx();
+
+            succeeded++;
+            completed++;
+            send({
+              status: "video_done",
+              videoId,
+              title,
+              chunks: chunks.length,
+              completed,
+              total,
+              progress: Math.round((completed / total) * 100),
+            });
           }
-
-          const safeName = `yt-${videoId}`;
-          const ytUrl = `https://youtube.com/watch?v=${videoId}`;
-          const info = insertFile.run(
-            safeName,
-            title,
-            Buffer.byteLength(text),
-            ytUrl,
-            videoId,
-            userId
-          );
-          const fileId = info.lastInsertRowid as number;
-
-          const chunks = segments.length > 0
-            ? chunkTranscriptSegments(segments, title)
-            : chunkText(text, title);
-
-          const tx = db.transaction(() => {
-            for (let i = 0; i < chunks.length; i++) {
-              insertChunk.run(
-                fileId,
-                i,
-                chunks[i].content,
-                chunks[i].tokenEstimate,
-                chunks[i].startSeconds ?? null,
-                chunks[i].endSeconds ?? null
-              );
-            }
-            updateFileChunks.run(chunks.length, fileId);
-          });
-          tx();
-
-          succeeded++;
-          completed++;
-          send({
-            status: "video_done",
-            videoId,
-            title,
-            chunks: chunks.length,
-            completed,
-            total: videoIds.length,
-            progress: Math.round((completed / videoIds.length) * 100),
-          });
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : "Transcript not available";
           console.error(`[batch] Video ${videoId} FAILED:`, err instanceof Error ? err.stack : err);
@@ -120,13 +145,13 @@ export async function POST(req: NextRequest) {
             videoId,
             error: errMsg,
             completed,
-            total: videoIds.length,
+            total,
           });
         }
 
-        // Small delay to avoid rate limiting
-        if (completed < videoIds.length) {
-          await new Promise((r) => setTimeout(r, 300));
+        // Delay between videos to avoid triggering YouTube rate limits
+        if (i < newVideoIds.length - 1) {
+          await new Promise((r) => setTimeout(r, DELAY_BETWEEN_MS));
         }
       }
 
@@ -134,7 +159,7 @@ export async function POST(req: NextRequest) {
         status: "done",
         succeeded,
         failed,
-        total: videoIds.length,
+        total,
         progress: 100,
       });
 

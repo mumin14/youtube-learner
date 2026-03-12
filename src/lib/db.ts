@@ -69,6 +69,8 @@ function initializeSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_action_items_difficulty ON action_items(difficulty);
     CREATE INDEX IF NOT EXISTS idx_action_items_file_id ON action_items(file_id);
+    CREATE INDEX IF NOT EXISTS idx_action_items_file_difficulty ON action_items(file_id, difficulty, topic);
+    CREATE INDEX IF NOT EXISTS idx_action_items_completed ON action_items(completed, completed_at);
     CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id);
     CREATE INDEX IF NOT EXISTS idx_chunks_processed ON chunks(processed);
   `);

@@ -15,8 +15,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "YouTube Learner",
+  title: "Socraty AI",
   description: "Transform YouTube transcripts into structured learning paths",
+  icons: {
+    icon: "/logo.png",
+  },
 };
 
 export default function RootLayout({

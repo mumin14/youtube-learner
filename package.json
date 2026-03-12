@@ -1,5 +1,5 @@
 {
-  "name": "youtube-learner",
+  "name": "socraty-ai",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -29,6 +29,8 @@
     "sonner": "^2.0.7",
     "stripe": "^20.4.0",
     "tailwind-merge": "^3.5.0",
+    "youtube-captions-api": "^1.0.1",
+    "youtube-transcript": "^1.2.1",
     "youtubei.js": "^16.0.1"
   },
   "devDependencies": {

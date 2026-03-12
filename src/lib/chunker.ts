@@ -7,8 +7,8 @@ export interface ChunkResult {
   endSeconds?: number;
 }
 
-const TARGET_CHUNK_TOKENS = 1500;
-const OVERLAP_TOKENS = 200;
+const TARGET_CHUNK_TOKENS = 2500;
+const OVERLAP_TOKENS = 300;
 const CHARS_PER_TOKEN = 4;
 
 export function chunkText(text: string, filename: string): ChunkResult[] {

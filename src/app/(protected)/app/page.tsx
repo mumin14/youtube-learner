@@ -2,6 +2,7 @@
 
 import { UploadTab } from "@/components/upload-tab";
 import { ActionItemsTab } from "@/components/action-items-tab";
+import { LibraryTab } from "@/components/library-tab";
 import { AskAiTab } from "@/components/ask-ai-tab";
 import { LearnerSettingsTab } from "@/components/learner-settings-tab";
 import { useAppView } from "@/components/app-shell";
@@ -9,6 +10,7 @@ import { useAppView } from "@/components/app-shell";
 const VIEW_TITLES: Record<string, string> = {
   upload: "Upload",
   "action-items": "Action Items",
+  library: "Library",
   "ask-ai": "Ask AI",
   "learner-settings": "Learner Settings",
 };
@@ -37,6 +39,7 @@ export default function AppPage() {
 
       {activeView === "upload" && <UploadTab />}
       {activeView === "action-items" && <ActionItemsTab />}
+      {activeView === "library" && <LibraryTab />}
       {activeView === "learner-settings" && <LearnerSettingsTab />}
     </div>
   );

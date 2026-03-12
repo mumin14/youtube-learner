@@ -3,9 +3,9 @@ import { callClaude } from "./claude";
 import { EXTRACTION_PROMPT } from "./prompts";
 import { getLearnerContext } from "./learner-profile";
 
-const BATCH_SIZE = 3;
-const CONCURRENCY = 1;
-const DELAY_BETWEEN_MS = 2000;
+const BATCH_SIZE = 5;
+const CONCURRENCY = 2;
+const DELAY_BETWEEN_MS = 1500;
 
 interface ExtractedItem {
   chunk_id: number;
@@ -125,7 +125,13 @@ export async function processAllChunks(jobId: number, userId: number): Promise<v
     }
   }
 
-  if (failedBatches > 0) {
+  if (failedBatches > 0 && processedCount === failedBatches * BATCH_SIZE) {
+    // All batches failed — mark as error
+    db.prepare(
+      `UPDATE processing_jobs SET status = 'error', error_message = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(`All ${failedBatches} batch(es) failed — check API key or rate limits`, jobId);
+  } else if (failedBatches > 0) {
+    // Some batches succeeded, some failed — still completed but with warning
     db.prepare(
       `UPDATE processing_jobs SET status = 'completed', error_message = ?, updated_at = datetime('now') WHERE id = ?`
     ).run(`${failedBatches} batch(es) failed — re-run to retry`, jobId);

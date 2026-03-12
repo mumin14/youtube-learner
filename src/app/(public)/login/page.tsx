@@ -49,7 +49,7 @@ export default function LoginPage() {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-foreground">Welcome Back</h1>
           <p className="text-muted-foreground mt-2">
-            Enter your email to restore access to YouTube Learner
+            Enter your email to restore access to Socraty AI
           </p>
         </div>
 

@@ -12,12 +12,12 @@ export function useProcessingStatus() {
     progress: 0,
   });
 
-  const startProcessing = useCallback(async () => {
+  const startProcessing = useCallback(async (force = true) => {
     try {
       const res = await fetch("/api/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: true }),
+        body: JSON.stringify({ force }),
       });
       const data = await res.json();
 

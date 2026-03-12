@@ -384,6 +384,33 @@ export function ActionItemsTab() {
     fetchItems();
   }, [fetchItems]);
 
+  // Poll for new items while processing is running
+  useEffect(() => {
+    let prevTotal = -1;
+    let stableCount = 0;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch("/api/action-items?difficulty=easy,medium,hard");
+        const data = await res.json();
+        const total = (data.counts?.easy ?? 0) + (data.counts?.medium ?? 0) + (data.counts?.hard ?? 0);
+        if (total !== prevTotal) {
+          prevTotal = total;
+          stableCount = 0;
+          fetchItems();
+        } else {
+          stableCount++;
+          // Stop polling after count is stable for 4 checks (20 seconds)
+          if (stableCount >= 4) clearInterval(interval);
+        }
+      } catch {
+        // silent
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const selectDifficulty = (d: string) => {
     setSelectedDifficulty(d);
   };
@@ -641,7 +668,7 @@ export function ActionItemsTab() {
                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                               </svg>
-                              Notes
+                              Upload notes to get graded
                             </button>
                             <span
                               className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${cfg.bg} ${cfg.text}`}

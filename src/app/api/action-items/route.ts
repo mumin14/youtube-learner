@@ -64,71 +64,61 @@ export async function GET(req: NextRequest) {
     END,
     ai.topic, ai.id`;
 
-  const items = db.prepare(query).all(...params);
+  // Prepare all metadata queries upfront for batch execution
+  const topicsStmt = db.prepare(
+    `SELECT DISTINCT ai.topic FROM action_items ai
+     JOIN files f ON f.id = ai.file_id AND f.user_id = ?
+     WHERE ai.topic IS NOT NULL ORDER BY ai.topic`
+  );
+  const countsStmt = db.prepare(
+    `SELECT ai.difficulty, COUNT(*) as count,
+       SUM(CASE WHEN ai.completed = 1 THEN 1 ELSE 0 END) as completed_count
+     FROM action_items ai
+     JOIN files f ON f.id = ai.file_id AND f.user_id = ?
+     GROUP BY ai.difficulty`
+  );
+  const sourcesStmt = db.prepare(
+    `SELECT f.id, f.original_name, f.source_type, f.video_id,
+       COUNT(ai.id) as item_count
+     FROM files f
+     JOIN action_items ai ON ai.file_id = f.id
+     WHERE f.user_id = ?
+     GROUP BY f.id
+     ORDER BY f.original_name`
+  );
+  const reviewStmt = db.prepare(
+    `SELECT COUNT(*) as count FROM action_items ai
+     JOIN files f ON f.id = ai.file_id AND f.user_id = ?
+     WHERE (ai.completed = 1 AND ai.completed_at < datetime('now', '-3 days'))
+        OR (ai.completed = 0 AND ai.created_at < datetime('now', '-7 days'))`
+  );
+  const itemsStmt = db.prepare(query);
 
-  // Get distinct topics for the filter dropdown — scoped to user
-  const topics = db
-    .prepare(
-      `SELECT DISTINCT ai.topic FROM action_items ai
-       JOIN files f ON f.id = ai.file_id AND f.user_id = ?
-       WHERE ai.topic IS NOT NULL ORDER BY ai.topic`
-    )
-    .all(user.id) as { topic: string }[];
+  // Run all queries in a single transaction for consistency and speed
+  const fetchAll = db.transaction(() => {
+    const items = itemsStmt.all(...params);
+    const topics = topicsStmt.all(user.id) as { topic: string }[];
+    const allCounts = countsStmt.all(user.id) as { difficulty: string; count: number; completed_count: number }[];
+    const sources = sourcesStmt.all(user.id) as { id: number; original_name: string; source_type: string; video_id: string | null; item_count: number }[];
+    const reviewCount = (reviewStmt.get(user.id) as { count: number }).count;
+    return { items, topics, allCounts, sources, reviewCount };
+  });
 
-  // Get counts by difficulty — scoped to user
-  const counts = db
-    .prepare(
-      `SELECT ai.difficulty, COUNT(*) as count FROM action_items ai
-       JOIN files f ON f.id = ai.file_id AND f.user_id = ?
-       GROUP BY ai.difficulty`
-    )
-    .all(user.id) as { difficulty: string; count: number }[];
-
-  // Get distinct sources (files) that have action items — scoped to user
-  const sources = db
-    .prepare(
-      `SELECT f.id, f.original_name, f.source_type, f.video_id,
-        COUNT(ai.id) as item_count
-       FROM files f
-       JOIN action_items ai ON ai.file_id = f.id
-       WHERE f.user_id = ?
-       GROUP BY f.id
-       ORDER BY f.original_name`
-    )
-    .all(user.id) as { id: number; original_name: string; source_type: string; video_id: string | null; item_count: number }[];
-
-  // Get completion counts by difficulty — scoped to user
-  const completionCounts = db
-    .prepare(
-      `SELECT ai.difficulty, COUNT(*) as count FROM action_items ai
-       JOIN files f ON f.id = ai.file_id AND f.user_id = ?
-       WHERE ai.completed = 1 GROUP BY ai.difficulty`
-    )
-    .all(user.id) as { difficulty: string; count: number }[];
-
-  // Count items needing review — scoped to user
-  const reviewCount = (db
-    .prepare(
-      `SELECT COUNT(*) as count FROM action_items ai
-       JOIN files f ON f.id = ai.file_id AND f.user_id = ?
-       WHERE (ai.completed = 1 AND ai.completed_at < datetime('now', '-3 days'))
-          OR (ai.completed = 0 AND ai.created_at < datetime('now', '-7 days'))`
-    )
-    .get(user.id) as { count: number }).count;
+  const { items, topics, allCounts, sources, reviewCount } = fetchAll();
 
   return NextResponse.json({
     items,
     topics: topics.map((t) => t.topic),
     sources,
     counts: {
-      easy: counts.find((c) => c.difficulty === "easy")?.count ?? 0,
-      medium: counts.find((c) => c.difficulty === "medium")?.count ?? 0,
-      hard: counts.find((c) => c.difficulty === "hard")?.count ?? 0,
+      easy: allCounts.find((c) => c.difficulty === "easy")?.count ?? 0,
+      medium: allCounts.find((c) => c.difficulty === "medium")?.count ?? 0,
+      hard: allCounts.find((c) => c.difficulty === "hard")?.count ?? 0,
     },
     completedCounts: {
-      easy: completionCounts.find((c) => c.difficulty === "easy")?.count ?? 0,
-      medium: completionCounts.find((c) => c.difficulty === "medium")?.count ?? 0,
-      hard: completionCounts.find((c) => c.difficulty === "hard")?.count ?? 0,
+      easy: allCounts.find((c) => c.difficulty === "easy")?.completed_count ?? 0,
+      medium: allCounts.find((c) => c.difficulty === "medium")?.completed_count ?? 0,
+      hard: allCounts.find((c) => c.difficulty === "hard")?.completed_count ?? 0,
     },
     reviewCount,
   });

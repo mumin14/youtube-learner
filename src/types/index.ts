@@ -81,6 +81,8 @@ export interface ProcessingStatus {
   totalChunks: number;
   processedChunks: number;
   progress: number;
+  itemsFound?: number;
+  error?: string | null;
 }
 
 export interface ChatMessage {

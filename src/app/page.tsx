@@ -50,13 +50,16 @@ export default function LandingPage() {
       <main className="relative flex-1 flex flex-col items-center justify-center px-6 py-20">
         {/* Hero */}
         <div className="text-center max-w-2xl space-y-6 mb-12">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium tracking-wide uppercase">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-            AI-Powered Learning
-          </div>
-          <h1 className="text-5xl font-bold tracking-tight text-foreground sm:text-6xl">
-            YouTube Learner
-          </h1>
+          <img
+            src="/mascot.png"
+            alt="Agent Socraty"
+            className="w-28 h-28 sm:w-32 sm:h-32 mx-auto object-contain drop-shadow-lg"
+          />
+          <img
+            src="/logo.png"
+            alt="Socraty AI"
+            className="h-14 sm:h-16 mx-auto dark:invert"
+          />
           <p className="text-muted-foreground text-xl leading-relaxed">
             Transform YouTube videos and transcripts into personalized,
             structured learning paths. AI extracts action items by difficulty

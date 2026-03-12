@@ -1,4 +1,5 @@
 import { Innertube } from "youtubei.js";
+import { YoutubeTranscript } from "youtube-transcript";
 import type { YouTubeVideo, YouTubeInputType } from "@/types";
 
 export interface TranscriptSegment {
@@ -9,7 +10,14 @@ export interface TranscriptSegment {
 
 let _yt: Innertube | null = null;
 let _ytCreatedAt = 0;
-const YT_SESSION_TTL = 10 * 60 * 1000; // 10 minutes — refresh before sessions go stale
+const YT_SESSION_TTL = 10 * 60 * 1000; // 10 minutes
+
+// Circuit breakers: if YouTube is rate limiting, skip for all subsequent videos
+let _captionXmlBlocked = false;
+let _captionXmlBlockedAt = 0;
+let _ytTranscriptBlocked = false;
+let _ytTranscriptBlockedAt = 0;
+const BLOCK_TTL = 5 * 60 * 1000; // retry after 5 minutes
 
 async function getYt(): Promise<Innertube> {
   if (!_yt || Date.now() - _ytCreatedAt > YT_SESSION_TTL) {
@@ -26,14 +34,13 @@ function resetYt() {
 
 export interface ParsedInput {
   type: YouTubeInputType;
-  id: string; // videoId, playlistId, channelHandle, or search query
+  id: string;
   originalUrl: string;
 }
 
 export function parseYouTubeInput(input: string): ParsedInput {
   const trimmed = input.trim();
 
-  // Try parsing as URL
   try {
     const url = new URL(
       trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
@@ -46,171 +53,151 @@ export function parseYouTubeInput(input: string): ParsedInput {
     }
 
     if (hostname === "youtube.com" || hostname === "m.youtube.com") {
-      // Playlist
       const listId = url.searchParams.get("list");
       if (
         url.pathname === "/playlist" ||
         (listId && !url.searchParams.get("v"))
       ) {
-        return {
-          type: "playlist",
-          id: listId || "",
-          originalUrl: trimmed,
-        };
+        return { type: "playlist", id: listId || "", originalUrl: trimmed };
       }
 
-      // Video (may also have list param, but v= takes priority for single video)
       const videoId = url.searchParams.get("v");
       if (videoId) {
         return { type: "video", id: videoId, originalUrl: trimmed };
       }
 
-      // Channel handle: /@handle
       if (url.pathname.startsWith("/@")) {
-        return {
-          type: "channel",
-          id: url.pathname.slice(1), // keep the @ prefix
-          originalUrl: trimmed,
-        };
+        return { type: "channel", id: url.pathname.slice(1), originalUrl: trimmed };
       }
 
-      // Channel: /channel/UC...
       if (url.pathname.startsWith("/channel/")) {
-        return {
-          type: "channel",
-          id: url.pathname.split("/")[2],
-          originalUrl: trimmed,
-        };
+        return { type: "channel", id: url.pathname.split("/")[2], originalUrl: trimmed };
       }
 
-      // /c/ChannelName
       if (url.pathname.startsWith("/c/")) {
-        return {
-          type: "channel",
-          id: url.pathname.split("/")[2],
-          originalUrl: trimmed,
-        };
+        return { type: "channel", id: url.pathname.split("/")[2], originalUrl: trimmed };
       }
     }
   } catch {
     // Not a valid URL — treat as search
   }
 
-  // Plain text: treat as channel/search
   return { type: "search", id: trimmed, originalUrl: trimmed };
 }
 
+// Keep CaptionMeta export for batch route compatibility (no longer used for prefetch)
+export interface CaptionMeta {
+  videoId: string;
+  title: string;
+  captionUrl: string | null;
+}
+
+/**
+ * Fetch transcript for a YouTube video.
+ *
+ * Strategy:
+ * 1. youtube-transcript package (single InnerTube call)
+ * 2. youtubei.js getBasicInfo + caption XML fetch (with 429 retry/backoff)
+ * 3. Whisper audio transcription (requires OPENAI_API_KEY)
+ */
 export async function fetchTranscript(
   videoId: string
 ): Promise<{ text: string; title: string; segments: TranscriptSegment[] }> {
-  let title = `Video ${videoId}`;
-  let captionUrl: string | null = null;
+  // Get title via oEmbed (fast, reliable, never rate-limited)
+  let title = await fetchTitle(videoId);
 
-  // Try youtubei.js first
+  // Tier 1: youtube-transcript package (skip if circuit breaker tripped)
+  if (!_ytTranscriptBlocked || Date.now() - _ytTranscriptBlockedAt > BLOCK_TTL) {
+    try {
+      const entries = await YoutubeTranscript.fetchTranscript(videoId, { lang: "en" });
+      if (entries.length > 0) {
+        _ytTranscriptBlocked = false; // clear on success
+        const segments: TranscriptSegment[] = entries.map((e) => ({
+          text: e.text,
+          startSeconds: e.offset / 1000,
+          durationSeconds: e.duration / 1000,
+        }));
+        const text = entries.map((e) => e.text).join(" ").replace(/\n/g, " ").trim();
+        if (text) return { text, title, segments };
+      }
+    } catch {
+      _ytTranscriptBlocked = true;
+      _ytTranscriptBlockedAt = Date.now();
+    }
+  }
+
+  // Tier 2: youtubei.js getBasicInfo + caption XML (with robust 429 handling)
   try {
-    console.log(`[transcript] Tier 1: youtubei.js getInfo for ${videoId}...`);
     const yt = await getYt();
-    const info = await yt.getInfo(videoId);
-    title = info.basic_info.title || title;
-    console.log(`[transcript] Got video info: "${title}"`);
-
+    const info = await yt.getBasicInfo(videoId);
+    if (info.basic_info.title) title = info.basic_info.title;
     const tracks = info.captions?.caption_tracks || [];
-    console.log(`[transcript] Found ${tracks.length} caption tracks`);
+
     if (tracks.length > 0) {
       const track =
-        tracks.find(
-          (t) =>
-            t.language_code === "en" &&
-            !String(t.name?.text || "").includes("auto")
-        ) ||
+        tracks.find((t) => t.language_code === "en" && !String(t.name?.text || "").includes("auto")) ||
         tracks.find((t) => t.language_code === "en") ||
         tracks[0];
-      captionUrl = track.base_url;
-      console.log(`[transcript] Using caption track: lang=${track.language_code}`);
-    } else {
-      console.log(`[transcript] No caption tracks found via youtubei.js`);
+
+      const xml = await fetchCaptionXml(track.base_url);
+      return parseXmlCaptions(xml, title);
     }
   } catch (err) {
-    console.error(`[transcript] Tier 1 FAILED for ${videoId}:`, err instanceof Error ? err.stack : err);
-    // Reset cached instance in case session is stale
+    console.error(`[transcript] youtubei.js FAILED ${videoId}:`, err instanceof Error ? err.message : err);
     resetYt();
   }
 
-  // Fallback: scrape caption URL from the YouTube watch page
-  if (!captionUrl) {
-    console.log(`[transcript] Tier 2: scraping YouTube watch page for ${videoId}...`);
-    try {
-      const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept-Language": "en-US,en;q=0.9",
-        },
-      });
-      console.log(`[transcript] Page fetch status: ${pageRes.status}`);
-      const html = await pageRes.text();
-      console.log(`[transcript] Page HTML length: ${html.length} chars`);
+  // Tier 3: Whisper audio transcription
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("No captions available and OPENAI_API_KEY not set for audio transcription");
+  }
+  const { transcribeFromAudio } = await import("./transcribe");
+  return transcribeFromAudio(videoId);
+}
 
-      // Extract title from page
-      const titleMatch = html.match(/"title":"((?:[^"\\]|\\.)*)"/);
-      if (titleMatch && title === `Video ${videoId}`) {
-        title = JSON.parse(`"${titleMatch[1]}"`);
-        console.log(`[transcript] Extracted title from page: "${title}"`);
-      }
-
-      // Extract captionTracks from playerResponse JSON
-      const captionMatch = html.match(/"captionTracks":\s*(\[.*?\])/);
-      if (captionMatch) {
-        const captionTracks = JSON.parse(captionMatch[1]) as Array<{
-          baseUrl: string;
-          languageCode: string;
-          kind?: string;
-        }>;
-        console.log(`[transcript] Found ${captionTracks.length} caption tracks from page scrape`);
-
-        if (captionTracks.length > 0) {
-          const picked =
-            captionTracks.find((t) => t.languageCode === "en" && t.kind !== "asr") ||
-            captionTracks.find((t) => t.languageCode === "en") ||
-            captionTracks[0];
-          captionUrl = picked.baseUrl;
-          console.log(`[transcript] Using scraped caption track: lang=${picked.languageCode}`);
-        }
-      } else {
-        console.log(`[transcript] No captionTracks found in page HTML`);
-        // Check if we got a bot-detection page or login wall
-        if (html.includes("consent.youtube.com") || html.includes("CONSENT")) {
-          console.log(`[transcript] YouTube is showing a consent/cookie wall`);
-        }
-        if (html.includes("Sign in")) {
-          console.log(`[transcript] YouTube may be requiring sign-in`);
-        }
-      }
-    } catch (err) {
-      console.error(`[transcript] Tier 2 FAILED for ${videoId}:`, err instanceof Error ? err.stack : err);
+async function fetchTitle(videoId: string): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=https://youtube.com/watch?v=${videoId}&format=json`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      return data.title || `Video ${videoId}`;
     }
+  } catch {
+    // oEmbed failed, use fallback
+  }
+  return `Video ${videoId}`;
+}
+
+async function fetchCaptionXml(captionUrl: string): Promise<string> {
+  // Circuit breaker: if we already know YouTube is blocking, fail immediately
+  if (_captionXmlBlocked && Date.now() - _captionXmlBlockedAt < BLOCK_TTL) {
+    throw new Error("YouTube rate limited — skipping (will retry in a few minutes)");
   }
 
-  // Final fallback: download audio and transcribe via Whisper
-  if (!captionUrl) {
-    console.log(`[transcript] Tier 3: audio transcription via Whisper for ${videoId}...`);
-    if (!process.env.OPENAI_API_KEY) {
-      console.error(`[transcript] OPENAI_API_KEY not set, cannot use Whisper fallback`);
-      throw new Error("No captions available and OPENAI_API_KEY not set for audio transcription");
-    }
-    console.log(`[transcript] OPENAI_API_KEY is set (${process.env.OPENAI_API_KEY.slice(0, 10)}...), importing transcribe module...`);
-    const { transcribeFromAudio } = await import("./transcribe");
-    console.log(`[transcript] Calling transcribeFromAudio...`);
-    return transcribeFromAudio(videoId);
-  }
-
-  // Fetch subtitle XML from the caption URL
-  console.log(`[transcript] Fetching caption XML from URL...`);
   const res = await fetch(captionUrl);
-  console.log(`[transcript] Caption XML fetch status: ${res.status}`);
-  const xml = await res.text();
-  console.log(`[transcript] Caption XML length: ${xml.length} chars`);
 
-  // Parse <text start="12.5" dur="3.2">content</text> elements with timestamps
+  if (res.ok) {
+    // Clear circuit breaker on success
+    _captionXmlBlocked = false;
+    return await res.text();
+  }
+
+  if (res.status === 429) {
+    // Trip the circuit breaker — don't waste time retrying for other videos
+    _captionXmlBlocked = true;
+    _captionXmlBlockedAt = Date.now();
+    throw new Error("YouTube rate limited — try again in a few minutes");
+  }
+
+  throw new Error(`Caption fetch failed: HTTP ${res.status}`);
+}
+
+function parseXmlCaptions(
+  xml: string,
+  title: string
+): { text: string; title: string; segments: TranscriptSegment[] } {
   const segments: TranscriptSegment[] = [];
   const textParts: string[] = [];
   const regex = /<text\s+start="([^"]*)"(?:\s+dur="([^"]*)")?[^>]*>([\s\S]*?)<\/text>/g;
@@ -305,7 +292,6 @@ export async function searchVideos(
 ): Promise<YouTubeVideo[]> {
   const yt = await getYt();
 
-  // Search for full courses first, then general results
   const courseQuery = `${query} full course`;
   const [courseResults, generalResults] = await Promise.all([
     yt.search(courseQuery, { type: "video", sort_by: "relevance" }),
@@ -339,7 +325,6 @@ export async function searchVideos(
   extract(courseResults);
   extract(generalResults);
 
-  // Sort: longer videos first (courses tend to be longer)
   videos.sort((a, b) => {
     const parseDuration = (d: string) => {
       const parts = d.split(":").map(Number);
@@ -358,7 +343,6 @@ export async function searchChannels(
 ): Promise<{ channelName: string; videos: YouTubeVideo[] }> {
   const yt = await getYt();
 
-  // Search for channel
   const results = await yt.search(query, { type: "channel" });
   const firstChannel = results.results?.find(
     (r) => r.type === "Channel"

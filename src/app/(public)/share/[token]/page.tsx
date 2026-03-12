@@ -79,7 +79,7 @@ export default function SharePage() {
         <div className="text-center space-y-4">
           <p className="text-lg font-medium">{error}</p>
           <a href="/" className="text-primary hover:underline text-sm">
-            Go to YouTube Learner
+            Go to Socraty AI
           </a>
         </div>
       </div>
@@ -114,7 +114,7 @@ export default function SharePage() {
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
-            YouTube Learner
+            Socraty AI
           </a>
           <div className="flex items-center gap-3">
             {data.source.source_type === "youtube" && (
@@ -215,7 +215,7 @@ export default function SharePage() {
             href="/"
             className="text-sm text-muted-foreground hover:text-primary transition-colors"
           >
-            Create your own learning path with YouTube Learner
+            Create your own learning path with Socraty AI
           </a>
         </div>
       </div>

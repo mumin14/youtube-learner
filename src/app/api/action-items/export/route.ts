@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Build markdown
-  let md = "# YouTube Learner - Action Items\n\n";
+  let md = "# Socraty AI - Action Items\n\n";
   md += `*Exported on ${new Date().toLocaleDateString()}*\n\n`;
 
   for (const [source, sourceItems] of Object.entries(grouped)) {
@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
       headers: {
         "Content-Type": "text/markdown; charset=utf-8",
         "Content-Disposition":
-          'attachment; filename="youtube-learner-action-items.md"',
+          'attachment; filename="socraty-ai-action-items.md"',
       },
     });
   }
