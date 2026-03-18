@@ -240,7 +240,7 @@ export default function LandingPage() {
             <p className="text-sm font-semibold text-[#666] mb-4 tracking-wide">
               The learning execution engine
             </p>
-            <h1 className="text-4xl sm:text-5xl md:text-[56px] font-black leading-[1.08] tracking-[-0.03em] mb-6" style={{ fontFamily: "var(--font-inter), sans-serif" }}>
+            <h1 className="text-4xl sm:text-5xl md:text-[56px] font-medium leading-[1.08] tracking-[-0.03em] mb-6" style={{ fontFamily: "var(--font-inter), sans-serif" }}>
               Your AI learning agent that turns scattered materials into a learning execution system
             </h1>
             <p className="text-[#666] text-lg leading-relaxed mb-8 max-w-[520px]">
