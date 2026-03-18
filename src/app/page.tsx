@@ -89,6 +89,7 @@ export default function LandingPage() {
   const [promoPassword, setPromoPassword] = useState("");
   const [promoLoading, setPromoLoading] = useState(false);
   const [promoError, setPromoError] = useState("");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const router = useRouter();
   const pricingRef = useRef<HTMLDivElement>(null);
 
@@ -177,12 +178,59 @@ export default function LandingPage() {
             </a>
             <button
               onClick={scrollToPricing}
-              className="bg-[#0A0909] text-white text-sm font-semibold px-5 py-2.5 rounded-full hover:bg-[#333] transition"
+              className="bg-[#0A0909] text-white text-sm font-semibold px-5 py-2.5 rounded-full hover:bg-[#333] transition hidden sm:block"
             >
               Get Started Free
             </button>
+            {/* Mobile hamburger */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 text-[#333]"
+              aria-label="Toggle menu"
+            >
+              {mobileMenuOpen ? (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              )}
+            </button>
           </div>
         </div>
+        {/* Mobile menu dropdown */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-[rgba(2,1,1,0.07)] bg-white px-6 py-4 space-y-3">
+            <a href="#how-it-works" onClick={() => setMobileMenuOpen(false)} className="block text-sm text-[#666] hover:text-[#0A0909] transition">
+              How it works
+            </a>
+            <a href="#how-it-works" onClick={() => setMobileMenuOpen(false)} className="block text-sm text-[#666] hover:text-[#0A0909] transition">
+              Features
+            </a>
+            <a href="#comparison" onClick={() => setMobileMenuOpen(false)} className="block text-sm text-[#666] hover:text-[#0A0909] transition">
+              Compare
+            </a>
+            <a href="/enterprise" className="block text-sm text-[#666] hover:text-[#0A0909] transition">
+              Enterprise
+            </a>
+            <div className="border-t border-[rgba(2,1,1,0.07)] pt-3 flex flex-col gap-2">
+              <button
+                onClick={() => { setMobileMenuOpen(false); router.push("/login"); }}
+                className="text-sm text-[#666] hover:text-[#0A0909] transition text-left"
+              >
+                Sign in
+              </button>
+              <button
+                onClick={() => { setMobileMenuOpen(false); scrollToPricing(); }}
+                className="bg-[#0A0909] text-white text-sm font-semibold px-5 py-2.5 rounded-full hover:bg-[#333] transition text-center"
+              >
+                Get Started Free
+              </button>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* ── Hero ── */}
@@ -216,7 +264,7 @@ export default function LandingPage() {
               </a>
             </div>
           </div>
-          <div className="flex-shrink-0 relative w-[340px] h-[340px] sm:w-[420px] sm:h-[420px] md:w-[500px] md:h-[500px]">
+          <div className="flex-shrink-0 relative w-[280px] h-[280px] sm:w-[420px] sm:h-[420px] md:w-[500px] md:h-[500px]">
             {/* Mascot centre */}
             <img
               src="/mascot.png"

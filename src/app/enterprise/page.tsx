@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function EnterprisePage() {
   const router = useRouter();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
     <div
@@ -50,8 +52,35 @@ export default function EnterprisePage() {
             >
               Get Started Free
             </a>
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 text-[#333]"
+              aria-label="Toggle menu"
+            >
+              {mobileMenuOpen ? (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              )}
+            </button>
           </div>
         </div>
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-[rgba(2,1,1,0.07)] bg-white px-6 py-4 space-y-3">
+            <a href="/#how-it-works" className="block text-sm text-[#666] hover:text-[#0A0909] transition">How it works</a>
+            <a href="/#how-it-works" className="block text-sm text-[#666] hover:text-[#0A0909] transition">Features</a>
+            <a href="/#comparison" className="block text-sm text-[#666] hover:text-[#0A0909] transition">Compare</a>
+            <a href="/enterprise" className="block text-sm text-[#666] hover:text-[#0A0909] transition">Enterprise</a>
+            <div className="border-t border-[rgba(2,1,1,0.07)] pt-3 flex flex-col gap-2">
+              <a href="/login" className="text-sm text-[#666] hover:text-[#0A0909] transition">Sign in</a>
+              <a href="/#pricing" className="bg-[#0A0909] text-white text-sm font-semibold px-5 py-2.5 rounded-full hover:bg-[#333] transition text-center">Get Started Free</a>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* Hero */}

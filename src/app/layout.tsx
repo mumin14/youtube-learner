@@ -21,10 +21,25 @@ const figtree = Figtree({
 });
 
 export const metadata: Metadata = {
-  title: "Socraty AI",
-  description: "Transform YouTube transcripts into structured learning paths",
+  title: "Socraty — The learning execution engine",
+  description:
+    "Turn your scattered learning materials into structured daily actions. Upload anything, get action items, and track real comprehension with Socratic questioning.",
   icons: {
     icon: "/logo.png",
+  },
+  openGraph: {
+    title: "Socraty — The learning execution engine",
+    description:
+      "Turn your scattered learning materials into structured daily actions. Upload anything, get action items, and track real comprehension.",
+    url: "https://socraty.ai",
+    siteName: "Socraty",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Socraty — The learning execution engine",
+    description:
+      "Turn your scattered learning materials into structured daily actions.",
   },
 };
 
