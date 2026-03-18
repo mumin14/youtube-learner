@@ -1,30 +1,19 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { toast } from "sonner";
 import { useChat } from "@/hooks/use-chat";
 import { Button } from "@/components/ui/button";
 import { YouTubePlayer } from "@/components/youtube-player";
 import { ChatHistorySidebar } from "@/components/chat-history-sidebar";
 import { useAppView } from "@/components/app-shell";
-import type { ConversationSummary } from "@/types";
+import type { ConversationSummary, Folder } from "@/types";
 
-/** Strip markdown syntax from plain text */
-function stripMarkdown(text: string): string {
-  return text
-    .replace(/#{1,6}\s+/g, "")       // ## headers
-    .replace(/\*\*([^*]+)\*\*/g, "$1") // **bold**
-    .replace(/\*([^*]+)\*/g, "$1")     // *italic*
-    .replace(/__([^_]+)__/g, "$1")     // __bold__
-    .replace(/_([^_]+)_/g, "$1")       // _italic_
-    .replace(/`([^`]+)`/g, "$1");      // `code`
-}
-
-/** Parses AI message content and renders video timestamp links as clickable buttons */
+/** Parses AI message content — renders markdown and converts video timestamp links to buttons */
 function MessageContent({ content }: { content: string }) {
   const [activeVideo, setActiveVideo] = useState<{ videoId: string; seconds: number } | null>(null);
-
-  // Pattern: **[Watch at MM:SS](video_id:abc123,t:154)**
-  const parts = content.split(/(\*\*\[Watch at [^\]]+\]\(video_id:[^)]+\)\*\*)/g);
 
   const toggleVideo = useCallback((videoId: string, seconds: number) => {
     setActiveVideo((prev) =>
@@ -32,9 +21,12 @@ function MessageContent({ content }: { content: string }) {
     );
   }, []);
 
+  // Pattern: **[Watch at MM:SS](video_id:abc123,t:154)**
+  const parts = content.split(/(\*\*\[Watch at [^\]]+\]\(video_id:[^)]+\)\*\*)/g);
+
   return (
     <div className="space-y-2">
-      <div className="whitespace-pre-wrap">
+      <div>
         {parts.map((part, i) => {
           const match = part.match(/\*\*\[Watch at ([^\]]+)\]\(video_id:([^,]+),t:(\d+)\)\*\*/);
           if (match) {
@@ -44,7 +36,7 @@ function MessageContent({ content }: { content: string }) {
               <button
                 key={i}
                 onClick={() => toggleVideo(videoId, sec)}
-                className="inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded-md bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 text-xs font-medium transition-colors"
+                className="inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded-md bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 text-xs font-medium transition-colors dark:bg-red-950 dark:text-red-400 dark:hover:bg-red-900"
               >
                 <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z" />
@@ -53,7 +45,14 @@ function MessageContent({ content }: { content: string }) {
               </button>
             );
           }
-          return <span key={i}>{stripMarkdown(part)}</span>;
+          if (!part.trim()) return null;
+          return (
+            <div key={i} className="prose-chat">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {part}
+              </ReactMarkdown>
+            </div>
+          );
         })}
       </div>
       {activeVideo && (
@@ -67,17 +66,12 @@ function MessageContent({ content }: { content: string }) {
   );
 }
 
-interface SourceFile {
-  id: number;
-  original_name: string;
-  source_type: string;
-  status: string;
-}
-
 export function AskAiTab() {
-  const { focusFileId, clearFocusFile } = useAppView();
+  const { focusFileId, initialPrompt, clearFocusFile, clearInitialPrompt } = useAppView();
+  const pendingPromptRef = useRef<string | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<number | undefined>(undefined);
   const [selectedFileId, setSelectedFileId] = useState<number | undefined>(undefined);
-  const [sourceFiles, setSourceFiles] = useState<SourceFile[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [input, setInput] = useState("");
@@ -105,15 +99,16 @@ export function AskAiTab() {
 
   const { messages, sendMessage, isLoading, clearChat } = useChat({
     fileId: selectedFileId,
+    folderId: selectedFolderId,
     conversationId: activeConversationId,
     onConversationUpdate,
     attachmentText: attachment?.text,
   });
 
   useEffect(() => {
-    fetch("/api/files")
+    fetch("/api/folders")
       .then((res) => res.json())
-      .then((data) => setSourceFiles(data.files?.filter((f: SourceFile) => f.status === "completed") ?? []))
+      .then((data) => setFolders(data.folders ?? []))
       .catch(() => {});
     refreshConversations();
   }, [refreshConversations]);
@@ -124,14 +119,28 @@ export function AskAiTab() {
     }
   }, [messages]);
 
-  // When navigating from upload tab with "Ask AI" button
+  // When navigating from library or action item "Ask Socraty" button
   useEffect(() => {
     if (focusFileId !== null) {
       setSelectedFileId(focusFileId);
+      setSelectedFolderId(undefined);
       setActiveConversationId(null);
+      if (initialPrompt) {
+        pendingPromptRef.current = initialPrompt;
+        clearInitialPrompt();
+      }
       clearFocusFile();
     }
-  }, [focusFileId, clearFocusFile]);
+  }, [focusFileId, initialPrompt, clearFocusFile, clearInitialPrompt]);
+
+  // Auto-send pending prompt after useChat re-initializes with the correct fileId
+  useEffect(() => {
+    if (pendingPromptRef.current && !isLoading) {
+      const prompt = pendingPromptRef.current;
+      pendingPromptRef.current = null;
+      sendMessage(prompt);
+    }
+  }, [sendMessage, isLoading]);
 
   const handleNewChat = () => {
     setActiveConversationId(null);
@@ -201,13 +210,13 @@ export function AskAiTab() {
       const res = await fetch("/api/parse-attachment", { method: "POST", body: formData });
       if (!res.ok) {
         const data = await res.json();
-        alert(data.error || "Failed to parse file");
+        toast.error(data.error || "Failed to parse file");
         return;
       }
       const data = await res.json();
       setAttachment({ filename: data.filename, text: data.text });
     } catch {
-      alert("Failed to upload file");
+      toast.error("Failed to upload file");
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -247,7 +256,8 @@ export function AskAiTab() {
                   alt="Agent Socraty"
                   className="w-20 h-20 mx-auto object-contain drop-shadow-md"
                 />
-                <h3 className="text-2xl font-semibold text-foreground">How can I help you?</h3>
+                <h3 className="text-2xl font-semibold text-foreground">Ask Socraty anything</h3>
+                <p className="text-sm text-muted-foreground">I know your materials. Ask me to explain, summarize, or quiz you.</p>
                 <div className="flex flex-wrap gap-2 justify-center">
                   {[
                     "What are the main topics covered?",
@@ -321,13 +331,27 @@ export function AskAiTab() {
               <label htmlFor="source-select" className="text-xs text-muted-foreground">Source:</label>
               <select
                 id="source-select"
-                value={selectedFileId ?? ""}
-                onChange={(e) => setSelectedFileId(e.target.value ? Number(e.target.value) : undefined)}
+                value={selectedFileId ? `file:${selectedFileId}` : selectedFolderId ? `folder:${selectedFolderId}` : ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (!val) {
+                    setSelectedFolderId(undefined);
+                    setSelectedFileId(undefined);
+                  } else if (val.startsWith("folder:")) {
+                    setSelectedFolderId(Number(val.split(":")[1]));
+                    setSelectedFileId(undefined);
+                  } else if (val.startsWith("file:")) {
+                    setSelectedFileId(Number(val.split(":")[1]));
+                    setSelectedFolderId(undefined);
+                  }
+                }}
                 className="text-xs border border-border rounded-lg px-2.5 py-1.5 bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
               >
                 <option value="">All documents</option>
-                {sourceFiles.map((f) => (
-                  <option key={f.id} value={f.id}>{f.original_name}</option>
+                {folders.map((f) => (
+                  <option key={f.id} value={`folder:${f.id}`}>
+                    {f.name} ({f.file_count ?? 0} resources)
+                  </option>
                 ))}
               </select>
             </div>

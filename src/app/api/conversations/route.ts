@@ -1,31 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { parsePagination } from "@/lib/api-utils";
 
 export async function GET(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const db = getDb();
-  const conversations = db
-    .prepare(
-      `SELECT c.id, c.title, c.file_id, c.updated_at,
-              COUNT(m.id) as message_count
-       FROM conversations c
-       LEFT JOIN messages m ON m.conversation_id = c.id
-       WHERE c.user_id = ?
-       GROUP BY c.id
-       ORDER BY c.updated_at DESC`
-    )
-    .all(user.id);
+  const { limit, offset } = parsePagination(req.nextUrl.searchParams);
 
-  return NextResponse.json({ conversations });
+  const total = (
+    await db.get(`SELECT COUNT(*) as cnt FROM conversations WHERE user_id = ?`, user.id) as { cnt: number }
+  ).cnt;
+
+  const conversations = await db.all(
+    `SELECT c.id, c.title, c.file_id, c.updated_at,
+            COUNT(m.id) as message_count
+     FROM conversations c
+     LEFT JOIN messages m ON m.conversation_id = c.id
+     WHERE c.user_id = ?
+     GROUP BY c.id
+     ORDER BY c.updated_at DESC
+     LIMIT ? OFFSET ?`,
+    user.id, limit, offset
+  );
+
+  return NextResponse.json({ conversations, total, limit, offset });
 }
 
 export async function POST(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -36,15 +43,15 @@ export async function POST(req: NextRequest) {
   };
 
   const db = getDb();
-  const result = db
-    .prepare(
-      `INSERT INTO conversations (user_id, title, file_id) VALUES (?, ?, ?)`
-    )
-    .run(user.id, title ?? "New Chat", fileId ?? null);
+  const result = await db.run(
+    `INSERT INTO conversations (user_id, title, file_id) VALUES (?, ?, ?)`,
+    user.id, title ?? "New Chat", fileId ?? null
+  );
 
-  const conversation = db
-    .prepare(`SELECT * FROM conversations WHERE id = ?`)
-    .get(result.lastInsertRowid);
+  const conversation = await db.get(
+    `SELECT * FROM conversations WHERE id = ?`,
+    result.lastInsertRowid
+  );
 
   return NextResponse.json({ conversation }, { status: 201 });
 }

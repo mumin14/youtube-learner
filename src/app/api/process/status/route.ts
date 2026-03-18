@@ -10,7 +10,7 @@ interface AuthUser {
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const user = requireAuth(req) as AuthUser | null;
+  const user = await requireAuth(req) as AuthUser | null;
   if (!user) {
     return new Response("Unauthorized", { status: 401 });
   }
@@ -49,11 +49,12 @@ export async function GET(req: NextRequest) {
         }
       };
 
-      interval = setInterval(() => {  // poll every 1s (was 500ms)
+      interval = setInterval(async () => {  // poll every 1s (was 500ms)
         try {
-          const job = db
-            .prepare("SELECT * FROM processing_jobs WHERE id = ?")
-            .get(Number(jobId)) as {
+          const job = await db.get(
+            "SELECT * FROM processing_jobs WHERE id = ?",
+            Number(jobId)
+          ) as {
             status: string;
             total_chunks: number;
             processed_chunks: number;
@@ -67,12 +68,11 @@ export async function GET(req: NextRequest) {
             return;
           }
 
-          const itemCount = db
-            .prepare(
-              `SELECT COUNT(*) as count FROM action_items
-               WHERE file_id IN (SELECT id FROM files WHERE user_id = ?)`
-            )
-            .get(user.id) as { count: number };
+          const itemCount = await db.get(
+            `SELECT COUNT(*) as count FROM action_items
+             WHERE file_id IN (SELECT id FROM files WHERE user_id = ?)`,
+            user.id
+          ) as { count: number };
 
           sendEvent({
             status: job.status,

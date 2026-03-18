@@ -60,7 +60,7 @@ Respond with this exact JSON structure:
 }
 
 export async function POST(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   const db = getDb();
 
   // Load combined learner profile (manual + LLM-imported)
-  const learnerProfile = getLearnerContext(user.id);
+  const learnerProfile = await getLearnerContext(user.id);
 
   // Get all chunks for this user (optionally filtered by file)
   let chunkQuery = `
@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
 
   chunkQuery += ` ORDER BY c.file_id, c.chunk_index`;
 
-  const chunks = db.prepare(chunkQuery).all(...params) as Array<{
+  const chunks = await db.all(chunkQuery, ...params) as Array<{
     id: number;
     content: string;
     file_id: number;
@@ -110,13 +110,15 @@ export async function POST(req: NextRequest) {
 
   // Delete existing non-completed action items for the scope (user can re-scope)
   if (fileId) {
-    db.prepare(
-      `DELETE FROM action_items WHERE completed = 0 AND file_id = ? AND file_id IN (SELECT id FROM files WHERE user_id = ?)`
-    ).run(fileId, user.id);
+    await db.run(
+      `DELETE FROM action_items WHERE completed = 0 AND file_id = ? AND file_id IN (SELECT id FROM files WHERE user_id = ?)`,
+      fileId, user.id
+    );
   } else {
-    db.prepare(
-      `DELETE FROM action_items WHERE completed = 0 AND file_id IN (SELECT id FROM files WHERE user_id = ?)`
-    ).run(user.id);
+    await db.run(
+      `DELETE FROM action_items WHERE completed = 0 AND file_id IN (SELECT id FROM files WHERE user_id = ?)`,
+      user.id
+    );
   }
 
   // Process in batches
@@ -124,11 +126,6 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
     batches.push(chunks.slice(i, i + BATCH_SIZE));
   }
-
-  const insertItem = db.prepare(
-    `INSERT INTO action_items (chunk_id, file_id, difficulty, title, description, source_context, topic, timestamp_seconds)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  );
 
   let totalItems = 0;
 
@@ -164,10 +161,12 @@ export async function POST(req: NextRequest) {
         }>;
       };
 
-      const tx = db.transaction(() => {
+      await db.transaction(async () => {
         for (const item of parsed.items) {
           const matchedChunk = batch.find((c) => c.id === item.chunk_id);
-          insertItem.run(
+          await db.run(
+            `INSERT INTO action_items (chunk_id, file_id, difficulty, title, description, source_context, topic, timestamp_seconds)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             matchedChunk ? item.chunk_id : batch[0].id,
             matchedChunk?.file_id ?? batch[0].file_id,
             item.difficulty,
@@ -180,7 +179,6 @@ export async function POST(req: NextRequest) {
           totalItems++;
         }
       });
-      tx();
     } catch (err) {
       console.error("Scoped extraction batch failed:", err);
     }

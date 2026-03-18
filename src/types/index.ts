@@ -11,6 +11,7 @@ export interface FileRecord {
   video_id: string | null;
   share_token: string | null;
   user_id: number | null;
+  folder_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +49,8 @@ export interface ActionItem {
   timestamp_seconds: number | null;
   completed: number;
   completed_at: string | null;
+  scheduled_date: string | null;
+  scheduled_time: string | null;
   created_at: string;
   // joined fields
   filename?: string;
@@ -93,6 +96,7 @@ export interface ChatMessage {
 export interface UserRecord {
   id: number;
   email: string;
+  password_hash: string | null;
   stripe_customer_id: string;
   subscription_status:
     | "active"
@@ -159,4 +163,19 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+}
+
+export interface Folder {
+  id: number;
+  user_id: number;
+  name: string;
+  color: string;
+  created_at: string;
+  updated_at: string;
+  file_count?: number;
+  share_token?: string | null;
+  spec_text?: string | null;
+  spec_filename?: string | null;
+  study_level?: string | null;
+  study_level_details?: string | null;
 }

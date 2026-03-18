@@ -6,7 +6,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -14,20 +14,23 @@ export async function GET(
   const { id } = await params;
   const db = getDb();
 
-  const conversation = db
-    .prepare(`SELECT * FROM conversations WHERE id = ? AND user_id = ?`)
-    .get(Number(id), user.id);
+  const conversation = await db.get(
+    `SELECT * FROM conversations WHERE id = ? AND user_id = ?`,
+    Number(id), user.id
+  );
 
   if (!conversation) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const messages = db
-    .prepare(
-      `SELECT id, conversation_id, role, content, created_at
-       FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`
-    )
-    .all(Number(id));
+  const messages = await db.all(
+    `SELECT m.id, m.conversation_id, m.role, m.content, m.created_at
+     FROM messages m
+     JOIN conversations c ON c.id = m.conversation_id AND c.user_id = ?
+     WHERE m.conversation_id = ?
+     ORDER BY m.created_at ASC`,
+    user.id, Number(id)
+  );
 
   return NextResponse.json({ conversation, messages });
 }
@@ -36,7 +39,7 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -44,9 +47,10 @@ export async function DELETE(
   const { id } = await params;
   const db = getDb();
 
-  const result = db
-    .prepare(`DELETE FROM conversations WHERE id = ? AND user_id = ?`)
-    .run(Number(id), user.id);
+  const result = await db.run(
+    `DELETE FROM conversations WHERE id = ? AND user_id = ?`,
+    Number(id), user.id
+  );
 
   if (result.changes === 0) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

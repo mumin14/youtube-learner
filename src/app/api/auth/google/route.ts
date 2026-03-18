@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) {
     return NextResponse.json(
@@ -34,6 +34,18 @@ export async function GET() {
     path: "/",
     maxAge: 600, // 10 minutes
   });
+
+  // If a promo code was passed, store it for the callback
+  const promo = req.nextUrl.searchParams.get("promo");
+  if (promo) {
+    response.cookies.set("promo_pending", promo.trim(), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 600,
+    });
+  }
 
   return response;
 }

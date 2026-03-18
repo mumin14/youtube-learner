@@ -20,7 +20,7 @@ export default async function ProtectedLayout({
     redirect("/");
   }
 
-  const user = getSessionUser(sessionId);
+  const user = await getSessionUser(sessionId);
   if (!user) {
     redirect("/");
   }

@@ -8,7 +8,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -17,9 +17,9 @@ export async function POST(
   const db = getDb();
 
   // Check if processing is running
-  const runningJob = db
-    .prepare("SELECT id FROM processing_jobs WHERE status IN ('pending', 'running') LIMIT 1")
-    .get();
+  const runningJob = await db.get(
+    "SELECT id FROM processing_jobs WHERE status IN ('pending', 'running') LIMIT 1"
+  );
   if (runningJob) {
     return NextResponse.json(
       { error: "Cannot re-ingest while processing is running" },
@@ -27,7 +27,7 @@ export async function POST(
     );
   }
 
-  const file = db.prepare("SELECT * FROM files WHERE id = ? AND user_id = ?").get(Number(id), user.id) as {
+  const file = await db.get("SELECT * FROM files WHERE id = ? AND user_id = ?", Number(id), user.id) as {
     id: number;
     video_id: string | null;
     source_type: string;
@@ -54,17 +54,15 @@ export async function POST(
         ? chunkTranscriptSegments(segments, title)
         : chunkText(text, title);
 
-    const tx = db.transaction(() => {
+    await db.transaction(async () => {
       // Delete old action items and chunks for this file
-      db.prepare("DELETE FROM action_items WHERE file_id = ?").run(file.id);
-      db.prepare("DELETE FROM chunks WHERE file_id = ?").run(file.id);
+      await db.run("DELETE FROM action_items WHERE file_id = ?", file.id);
+      await db.run("DELETE FROM chunks WHERE file_id = ?", file.id);
 
       // Insert new chunks with timestamps
-      const insertChunk = db.prepare(
-        "INSERT INTO chunks (file_id, chunk_index, content, token_estimate, start_seconds, end_seconds) VALUES (?, ?, ?, ?, ?, ?)"
-      );
       for (let i = 0; i < chunks.length; i++) {
-        insertChunk.run(
+        await db.run(
+          "INSERT INTO chunks (file_id, chunk_index, content, token_estimate, start_seconds, end_seconds) VALUES (?, ?, ?, ?, ?, ?)",
           file.id,
           i,
           chunks[i].content,
@@ -75,11 +73,11 @@ export async function POST(
       }
 
       // Update file record
-      db.prepare(
-        "UPDATE files SET chunk_count = ?, status = 'chunked', size_bytes = ?, original_name = ?, updated_at = datetime('now') WHERE id = ?"
-      ).run(chunks.length, Buffer.byteLength(text), title, file.id);
+      await db.run(
+        "UPDATE files SET chunk_count = ?, status = 'chunked', size_bytes = ?, original_name = ?, updated_at = NOW() WHERE id = ?",
+        chunks.length, Buffer.byteLength(text), title, file.id
+      );
     });
-    tx();
 
     return NextResponse.json({ success: true, chunks: chunks.length, title });
   } catch (err) {

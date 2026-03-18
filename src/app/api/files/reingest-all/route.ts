@@ -5,7 +5,7 @@ import { fetchTranscript } from "@/lib/youtube";
 import { chunkTranscriptSegments, chunkText } from "@/lib/chunker";
 
 export async function POST(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -13,9 +13,9 @@ export async function POST(req: NextRequest) {
   const db = getDb();
 
   // Check if processing is running
-  const runningJob = db
-    .prepare("SELECT id FROM processing_jobs WHERE status IN ('pending', 'running') LIMIT 1")
-    .get();
+  const runningJob = await db.get(
+    "SELECT id FROM processing_jobs WHERE status IN ('pending', 'running') LIMIT 1"
+  );
   if (runningJob) {
     return NextResponse.json(
       { error: "Cannot re-ingest while processing is running" },
@@ -23,9 +23,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const youtubeFiles = db
-    .prepare("SELECT id, video_id, original_name FROM files WHERE source_type = 'youtube' AND video_id IS NOT NULL AND user_id = ?")
-    .all(user.id) as { id: number; video_id: string; original_name: string }[];
+  const youtubeFiles = await db.all(
+    "SELECT id, video_id, original_name FROM files WHERE source_type = 'youtube' AND video_id IS NOT NULL AND user_id = ?",
+    user.id
+  ) as { id: number; video_id: string; original_name: string }[];
 
   let succeeded = 0;
   let failed = 0;
@@ -43,15 +44,13 @@ export async function POST(req: NextRequest) {
           ? chunkTranscriptSegments(segments, title)
           : chunkText(text, title);
 
-      const tx = db.transaction(() => {
-        db.prepare("DELETE FROM action_items WHERE file_id = ?").run(file.id);
-        db.prepare("DELETE FROM chunks WHERE file_id = ?").run(file.id);
+      await db.transaction(async () => {
+        await db.run("DELETE FROM action_items WHERE file_id = ?", file.id);
+        await db.run("DELETE FROM chunks WHERE file_id = ?", file.id);
 
-        const insertChunk = db.prepare(
-          "INSERT INTO chunks (file_id, chunk_index, content, token_estimate, start_seconds, end_seconds) VALUES (?, ?, ?, ?, ?, ?)"
-        );
         for (let i = 0; i < chunks.length; i++) {
-          insertChunk.run(
+          await db.run(
+            "INSERT INTO chunks (file_id, chunk_index, content, token_estimate, start_seconds, end_seconds) VALUES (?, ?, ?, ?, ?, ?)",
             file.id,
             i,
             chunks[i].content,
@@ -61,11 +60,11 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        db.prepare(
-          "UPDATE files SET chunk_count = ?, status = 'chunked', size_bytes = ?, original_name = ?, updated_at = datetime('now') WHERE id = ?"
-        ).run(chunks.length, Buffer.byteLength(text), title, file.id);
+        await db.run(
+          "UPDATE files SET chunk_count = ?, status = 'chunked', size_bytes = ?, original_name = ?, updated_at = NOW() WHERE id = ?",
+          chunks.length, Buffer.byteLength(text), title, file.id
+        );
       });
-      tx();
 
       succeeded++;
       // Small delay to avoid rate limiting

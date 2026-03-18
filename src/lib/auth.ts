@@ -31,43 +31,43 @@ export function verifySessionId(signed: string): string | null {
   return sessionId;
 }
 
-export function createSession(userId: number): {
+export async function createSession(userId: number): Promise<{
   sessionId: string;
   expires: Date;
-} {
+}> {
   const db = getDb();
   const sessionId = randomUUID();
   const expires = new Date();
   expires.setDate(expires.getDate() + SESSION_LIFETIME_DAYS);
 
-  db.prepare(
-    `INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)`
-  ).run(sessionId, userId, expires.toISOString());
+  await db.run(
+    `INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)`,
+    sessionId, userId, expires.toISOString()
+  );
 
   return { sessionId, expires };
 }
 
-export function getSessionUser(sessionId: string): UserRecord | null {
+export async function getSessionUser(sessionId: string): Promise<UserRecord | null> {
   const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT u.* FROM sessions s
-       JOIN users u ON u.id = s.user_id
-       WHERE s.id = ? AND s.expires_at > datetime('now')`
-    )
-    .get(sessionId) as (UserRecord & SessionRecord) | undefined;
+  const row = await db.get(
+    `SELECT u.* FROM sessions s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.id = ? AND s.expires_at > NOW()`,
+    sessionId
+  ) as (UserRecord & SessionRecord) | undefined;
 
   return row || null;
 }
 
-export function deleteSession(sessionId: string) {
+export async function deleteSession(sessionId: string) {
   const db = getDb();
-  db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
+  await db.run(`DELETE FROM sessions WHERE id = ?`, sessionId);
 }
 
-export function deleteUserSessions(userId: number) {
+export async function deleteUserSessions(userId: number) {
   const db = getDb();
-  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(userId);
+  await db.run(`DELETE FROM sessions WHERE user_id = ?`, userId);
 }
 
 export async function setSessionCookie(sessionId: string, expires: Date) {
@@ -87,14 +87,14 @@ export async function clearSessionCookie() {
   cookieStore.delete(COOKIE_NAME);
 }
 
-export function requireAuth(request: NextRequest): UserRecord | null {
+export async function requireAuth(request: NextRequest): Promise<UserRecord | null> {
   const cookie = request.cookies.get(COOKIE_NAME)?.value;
   if (!cookie) return null;
 
   const sessionId = verifySessionId(cookie);
   if (!sessionId) return null;
 
-  const user = getSessionUser(sessionId);
+  const user = await getSessionUser(sessionId);
   if (!user) return null;
 
   if (
@@ -113,40 +113,37 @@ export function isAdmin(email: string): boolean {
   return !!adminEmail && email === adminEmail;
 }
 
-export function getUserByEmail(email: string): UserRecord | null {
+export async function getUserByEmail(email: string): Promise<UserRecord | null> {
   const db = getDb();
-  return (db.prepare(`SELECT * FROM users WHERE email = ?`).get(email) as UserRecord) || null;
+  return (await db.get(`SELECT * FROM users WHERE email = ?`, email) as UserRecord) || null;
 }
 
-export function getUserByStripeCustomerId(customerId: string): UserRecord | null {
+export async function getUserByStripeCustomerId(customerId: string): Promise<UserRecord | null> {
   const db = getDb();
   return (
-    (db
-      .prepare(`SELECT * FROM users WHERE stripe_customer_id = ?`)
-      .get(customerId) as UserRecord) || null
+    (await db.get(`SELECT * FROM users WHERE stripe_customer_id = ?`, customerId) as UserRecord) || null
   );
 }
 
-export function upsertUser(
+export async function upsertUser(
   email: string,
-  stripeCustomerId: string,
+  stripeCustomerId: string | null,
   subscriptionId: string | null,
   status: string = "active",
   opts?: { googleId?: string; name?: string; avatarUrl?: string }
-): UserRecord {
+): Promise<UserRecord> {
   const db = getDb();
-  db.prepare(
+  await db.run(
     `INSERT INTO users (email, stripe_customer_id, subscription_id, subscription_status, google_id, name, avatar_url)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(email) DO UPDATE SET
-       stripe_customer_id = excluded.stripe_customer_id,
-       subscription_id = excluded.subscription_id,
+       stripe_customer_id = COALESCE(excluded.stripe_customer_id, users.stripe_customer_id),
+       subscription_id = COALESCE(excluded.subscription_id, users.subscription_id),
        subscription_status = excluded.subscription_status,
-       google_id = COALESCE(excluded.google_id, google_id),
-       name = COALESCE(excluded.name, name),
-       avatar_url = COALESCE(excluded.avatar_url, avatar_url),
-       updated_at = datetime('now')`
-  ).run(
+       google_id = COALESCE(excluded.google_id, users.google_id),
+       name = COALESCE(excluded.name, users.name),
+       avatar_url = COALESCE(excluded.avatar_url, users.avatar_url),
+       updated_at = NOW()`,
     email,
     stripeCustomerId,
     subscriptionId,
@@ -156,26 +153,25 @@ export function upsertUser(
     opts?.avatarUrl || null
   );
 
-  return getUserByEmail(email)!;
+  return (await getUserByEmail(email))!;
 }
 
-export function getUserByGoogleId(googleId: string): UserRecord | null {
+export async function getUserByGoogleId(googleId: string): Promise<UserRecord | null> {
   const db = getDb();
   return (
-    (db
-      .prepare(`SELECT * FROM users WHERE google_id = ?`)
-      .get(googleId) as UserRecord) || null
+    (await db.get(`SELECT * FROM users WHERE google_id = ?`, googleId) as UserRecord) || null
   );
 }
 
-export function updateUserGoogleInfo(
+export async function updateUserGoogleInfo(
   userId: number,
   googleId: string,
   name: string | null,
   avatarUrl: string | null
 ) {
   const db = getDb();
-  db.prepare(
-    `UPDATE users SET google_id = ?, name = COALESCE(?, name), avatar_url = COALESCE(?, avatar_url), updated_at = datetime('now') WHERE id = ?`
-  ).run(googleId, name, avatarUrl, userId);
+  await db.run(
+    `UPDATE users SET google_id = ?, name = COALESCE(?, name), avatar_url = COALESCE(?, avatar_url), updated_at = NOW() WHERE id = ?`,
+    googleId, name, avatarUrl, userId
+  );
 }

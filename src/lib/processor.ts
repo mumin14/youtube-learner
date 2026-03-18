@@ -1,7 +1,7 @@
 import { getDb } from "./db";
 import { callClaude } from "./claude";
 import { EXTRACTION_PROMPT } from "./prompts";
-import { getLearnerContext } from "./learner-profile";
+import { getLearnerContext, getFolderSpecContext } from "./learner-profile";
 
 const BATCH_SIZE = 5;
 const CONCURRENCY = 2;
@@ -17,22 +17,28 @@ interface ExtractedItem {
   timestamp_seconds: number | null;
 }
 
-export async function processAllChunks(jobId: number, userId: number): Promise<void> {
+export async function processAllChunks(jobId: number, userId: number, folderId?: number): Promise<void> {
   const db = getDb();
 
   // Load combined learner profile (manual + LLM-imported)
-  const learnerProfile = getLearnerContext(userId);
+  const learnerProfile = await getLearnerContext(userId);
 
-  // Only process chunks belonging to this user's files
-  const unprocessedChunks = db
-    .prepare(
-      `SELECT c.id, c.content, c.file_id, c.chunk_index, c.start_seconds, c.end_seconds
-       FROM chunks c
-       JOIN files f ON f.id = c.file_id AND f.user_id = ?
-       WHERE c.processed = 0
-       ORDER BY c.file_id, c.chunk_index`
-    )
-    .all(userId) as Array<{
+  // Load folder specification / marking criteria if processing a specific folder
+  const folderSpec = folderId ? await getFolderSpecContext(folderId) : "";
+
+  const folderJoinFilter = folderId ? ` AND f.folder_id = ?` : "";
+  const folderDirectFilter = folderId ? ` AND folder_id = ?` : "";
+  const queryParams: (number)[] = folderId ? [userId, folderId] : [userId];
+
+  // Only process chunks belonging to this user's files (scoped to folder if provided)
+  const unprocessedChunks = await db.all(
+    `SELECT c.id, c.content, c.file_id, c.chunk_index, c.start_seconds, c.end_seconds
+     FROM chunks c
+     JOIN files f ON f.id = c.file_id AND f.user_id = ?${folderJoinFilter}
+     WHERE c.processed = 0
+     ORDER BY c.file_id, c.chunk_index`,
+    ...queryParams
+  ) as Array<{
     id: number;
     content: string;
     file_id: number;
@@ -44,18 +50,20 @@ export async function processAllChunks(jobId: number, userId: number): Promise<v
   const totalChunks = unprocessedChunks.length;
 
   if (totalChunks === 0) {
-    db.prepare(
-      `UPDATE processing_jobs SET status = 'completed', total_chunks = 0, updated_at = datetime('now') WHERE id = ?`
-    ).run(jobId);
+    await db.run(
+      `UPDATE processing_jobs SET status = 'completed', total_chunks = 0, updated_at = NOW() WHERE id = ?`,
+      jobId
+    );
     return;
   }
 
-  db.prepare(
-    `UPDATE processing_jobs SET status = 'running', total_chunks = ?, updated_at = datetime('now') WHERE id = ?`
-  ).run(totalChunks, jobId);
+  await db.run(
+    `UPDATE processing_jobs SET status = 'running', total_chunks = ?, updated_at = NOW() WHERE id = ?`,
+    totalChunks, jobId
+  );
 
-  // Update this user's file statuses to processing
-  db.prepare(`UPDATE files SET status = 'processing' WHERE status = 'chunked' AND user_id = ?`).run(userId);
+  // Update file statuses to processing (scoped to folder if provided)
+  await db.run(`UPDATE files SET status = 'processing' WHERE status = 'chunked' AND user_id = ?${folderDirectFilter}`, ...queryParams);
 
   const batches: (typeof unprocessedChunks)[] = [];
   for (let i = 0; i < unprocessedChunks.length; i += BATCH_SIZE) {
@@ -65,19 +73,11 @@ export async function processAllChunks(jobId: number, userId: number): Promise<v
   let processedCount = 0;
   let failedBatches = 0;
 
-  const insertItem = db.prepare(
-    `INSERT INTO action_items (chunk_id, file_id, difficulty, title, description, source_context, topic, timestamp_seconds)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-  const markProcessed = db.prepare(
-    `UPDATE chunks SET processed = 1 WHERE id = ?`
-  );
-
   for (let i = 0; i < batches.length; i += CONCURRENCY) {
     const concurrentBatches = batches.slice(i, i + CONCURRENCY);
 
     const results = await Promise.allSettled(
-      concurrentBatches.map((batch) => extractFromBatch(batch, learnerProfile))
+      concurrentBatches.map((batch) => extractFromBatch(batch, learnerProfile, folderSpec))
     );
 
     for (let j = 0; j < results.length; j++) {
@@ -85,9 +85,11 @@ export async function processAllChunks(jobId: number, userId: number): Promise<v
       const batch = concurrentBatches[j];
 
       if (result.status === "fulfilled" && result.value.length > 0) {
-        const tx = db.transaction(() => {
+        await db.transaction(async () => {
           for (const item of result.value) {
-            insertItem.run(
+            await db.run(
+              `INSERT INTO action_items (chunk_id, file_id, difficulty, title, description, source_context, topic, timestamp_seconds)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
               item.chunkId,
               item.fileId,
               item.difficulty,
@@ -99,14 +101,13 @@ export async function processAllChunks(jobId: number, userId: number): Promise<v
             );
           }
           for (const chunk of batch) {
-            markProcessed.run(chunk.id);
+            await db.run(`UPDATE chunks SET processed = 1 WHERE id = ?`, chunk.id);
           }
         });
-        tx();
       } else if (result.status === "fulfilled" && result.value.length === 0) {
         // Empty extraction result (JSON parsed but no items) — mark as processed
         for (const chunk of batch) {
-          markProcessed.run(chunk.id);
+          await db.run(`UPDATE chunks SET processed = 1 WHERE id = ?`, chunk.id);
         }
       } else if (result.status === "rejected") {
         // API/network error — do NOT mark as processed so they can be retried
@@ -115,9 +116,10 @@ export async function processAllChunks(jobId: number, userId: number): Promise<v
       }
 
       processedCount += batch.length;
-      db.prepare(
-        `UPDATE processing_jobs SET processed_chunks = ?, updated_at = datetime('now') WHERE id = ?`
-      ).run(processedCount, jobId);
+      await db.run(
+        `UPDATE processing_jobs SET processed_chunks = ?, updated_at = NOW() WHERE id = ?`,
+        processedCount, jobId
+      );
     }
 
     if (i + CONCURRENCY < batches.length) {
@@ -127,28 +129,33 @@ export async function processAllChunks(jobId: number, userId: number): Promise<v
 
   if (failedBatches > 0 && processedCount === failedBatches * BATCH_SIZE) {
     // All batches failed — mark as error
-    db.prepare(
-      `UPDATE processing_jobs SET status = 'error', error_message = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(`All ${failedBatches} batch(es) failed — check API key or rate limits`, jobId);
+    await db.run(
+      `UPDATE processing_jobs SET status = 'error', error_message = ?, updated_at = NOW() WHERE id = ?`,
+      `All ${failedBatches} batch(es) failed — check API key or rate limits`, jobId
+    );
   } else if (failedBatches > 0) {
     // Some batches succeeded, some failed — still completed but with warning
-    db.prepare(
-      `UPDATE processing_jobs SET status = 'completed', error_message = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(`${failedBatches} batch(es) failed — re-run to retry`, jobId);
+    await db.run(
+      `UPDATE processing_jobs SET status = 'completed', error_message = ?, updated_at = NOW() WHERE id = ?`,
+      `${failedBatches} batch(es) failed — re-run to retry`, jobId
+    );
   } else {
-    db.prepare(
-      `UPDATE processing_jobs SET status = 'completed', updated_at = datetime('now') WHERE id = ?`
-    ).run(jobId);
+    await db.run(
+      `UPDATE processing_jobs SET status = 'completed', updated_at = NOW() WHERE id = ?`,
+      jobId
+    );
   }
 
-  db.prepare(
-    `UPDATE files SET status = 'completed' WHERE status = 'processing' AND user_id = ?`
-  ).run(userId);
+  await db.run(
+    `UPDATE files SET status = 'completed' WHERE status = 'processing' AND user_id = ?${folderDirectFilter}`,
+    ...queryParams
+  );
 }
 
 async function extractFromBatch(
   chunks: Array<{ id: number; content: string; file_id: number; start_seconds: number | null; end_seconds: number | null }>,
-  learnerProfile: string
+  learnerProfile: string,
+  folderSpec?: string
 ): Promise<
   Array<{
     chunkId: number;
@@ -170,7 +177,7 @@ async function extractFromBatch(
     })
     .join("\n\n");
 
-  const response = await callClaude(EXTRACTION_PROMPT(combinedContent, learnerProfile));
+  const response = await callClaude(EXTRACTION_PROMPT(combinedContent, learnerProfile, folderSpec));
 
   // Try to extract JSON from the response (handle markdown code blocks)
   let jsonStr = response;

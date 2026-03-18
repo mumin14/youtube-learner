@@ -5,7 +5,7 @@ import { requireAuth } from "@/lib/auth";
 import { chunkText } from "@/lib/chunker";
 
 export async function POST(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -24,9 +24,10 @@ export async function POST(req: NextRequest) {
   const db = getDb();
 
   // Check if already ingested
-  const existing = db
-    .prepare("SELECT id FROM files WHERE youtube_url = ? AND user_id = ?")
-    .get(url, user.id);
+  const existing = await db.get(
+    "SELECT id FROM files WHERE youtube_url = ? AND user_id = ?",
+    url, user.id
+  );
   if (existing) {
     return NextResponse.json({ error: "This article has already been ingested" }, { status: 409 });
   }
@@ -51,35 +52,27 @@ export async function POST(req: NextRequest) {
     const articleTitle = title || page.title || "Untitled Article";
     const safeName = `article-${Date.now()}`;
 
-    const insertFile = db.prepare(
+    const info = await db.run(
       `INSERT INTO files (filename, original_name, size_bytes, status, source_type, youtube_url, user_id)
-       VALUES (?, ?, ?, 'chunked', 'article', ?, ?)`
-    );
-    const insertChunk = db.prepare(
-      `INSERT INTO chunks (file_id, chunk_index, content, token_estimate) VALUES (?, ?, ?, ?)`
-    );
-    const updateFileChunks = db.prepare(
-      `UPDATE files SET chunk_count = ? WHERE id = ?`
-    );
-
-    const info = insertFile.run(
-      safeName,
-      articleTitle,
-      Buffer.byteLength(text),
-      url,
-      user.id
+       VALUES (?, ?, ?, 'chunked', 'article', ?, ?)`,
+      safeName, articleTitle, Buffer.byteLength(text), url, user.id
     );
     const fileId = info.lastInsertRowid as number;
 
     const chunks = chunkText(text, articleTitle);
 
-    const tx = db.transaction(() => {
+    await db.transaction(async () => {
       for (let i = 0; i < chunks.length; i++) {
-        insertChunk.run(fileId, i, chunks[i].content, chunks[i].tokenEstimate);
+        await db.run(
+          `INSERT INTO chunks (file_id, chunk_index, content, token_estimate) VALUES (?, ?, ?, ?)`,
+          fileId, i, chunks[i].content, chunks[i].tokenEstimate
+        );
       }
-      updateFileChunks.run(chunks.length, fileId);
+      await db.run(
+        `UPDATE files SET chunk_count = ? WHERE id = ?`,
+        chunks.length, fileId
+      );
     });
-    tx();
 
     return NextResponse.json({
       success: true,

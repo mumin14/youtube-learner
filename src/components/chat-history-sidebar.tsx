@@ -61,7 +61,7 @@ export function ChatHistorySidebar({
       {/* Conversation list */}
       <div className="flex-1 overflow-y-auto p-2 space-y-3">
         {groups.length === 0 && (
-          <p className="text-xs text-muted-foreground text-center py-4">No conversations yet</p>
+          <p className="text-xs text-muted-foreground text-center py-4">Ask anything about what you&apos;ve studied. Socraty knows your materials.</p>
         )}
         {groups.map((group) => (
           <div key={group.label}>

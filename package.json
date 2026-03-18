@@ -6,17 +6,20 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:init": "npx tsx src/lib/init-schema.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "@distube/ytdl-core": "^4.16.12",
     "@google/generative-ai": "^0.24.1",
-    "better-sqlite3": "^12.6.2",
+    "@neondatabase/serverless": "^1.0.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dotenv": "^17.3.1",
     "exa-js": "^2.7.0",
     "jintr": "^3.3.1",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.576.0",
     "mammoth": "^1.11.0",
     "next": "16.1.6",
@@ -26,16 +29,18 @@
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "sonner": "^2.0.7",
     "stripe": "^20.4.0",
     "tailwind-merge": "^3.5.0",
     "youtube-captions-api": "^1.0.1",
     "youtube-transcript": "^1.2.1",
-    "youtubei.js": "^16.0.1"
+    "youtubei.js": "^16.0.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

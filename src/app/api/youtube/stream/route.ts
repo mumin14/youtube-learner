@@ -21,7 +21,7 @@ async function getStreamYt(): Promise<Innertube> {
 }
 
 export async function GET(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return new Response("Unauthorized", { status: 401 });
   }

@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
       ? subscriptionId
       : subscriptionId?.id || null;
 
-  const user = upsertUser(
+  const user = await upsertUser(
     email.toLowerCase(),
     customerId,
     subId,
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   );
 
   // Create session and set cookie
-  const { sessionId, expires } = createSession(user.id);
+  const { sessionId, expires } = await createSession(user.id);
   await setSessionCookie(sessionId, expires);
 
   // Clear the google_pending cookie

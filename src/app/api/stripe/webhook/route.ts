@@ -34,15 +34,16 @@ export async function POST(req: NextRequest) {
         session.customer_email || session.customer_details?.email;
 
       if (email) {
-        db.prepare(
+        await db.run(
           `INSERT INTO users (email, stripe_customer_id, subscription_id, subscription_status)
            VALUES (?, ?, ?, 'active')
            ON CONFLICT(email) DO UPDATE SET
              stripe_customer_id = excluded.stripe_customer_id,
              subscription_id = excluded.subscription_id,
              subscription_status = 'active',
-             updated_at = datetime('now')`
-        ).run(email, customerId, subscriptionId);
+             updated_at = NOW()`,
+          email, customerId, subscriptionId
+        );
       }
       break;
     }
@@ -56,20 +57,22 @@ export async function POST(req: NextRequest) {
           .current_period_end ?? Math.floor(Date.now() / 1000);
       const periodEnd = new Date(rawEnd * 1000).toISOString();
 
-      db.prepare(
+      await db.run(
         `UPDATE users SET
           subscription_status = ?,
           current_period_end = ?,
-          updated_at = datetime('now')
-        WHERE stripe_customer_id = ?`
-      ).run(status, periodEnd, customerId);
+          updated_at = NOW()
+        WHERE stripe_customer_id = ?`,
+        status, periodEnd, customerId
+      );
 
       if (status === "canceled" || status === "inactive") {
-        const user = db
-          .prepare("SELECT id FROM users WHERE stripe_customer_id = ?")
-          .get(customerId) as { id: number } | undefined;
+        const user = await db.get(
+          "SELECT id FROM users WHERE stripe_customer_id = ?",
+          customerId
+        ) as { id: number } | undefined;
         if (user) {
-          db.prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id);
+          await db.run("DELETE FROM sessions WHERE user_id = ?", user.id);
         }
       }
       break;
@@ -79,17 +82,19 @@ export async function POST(req: NextRequest) {
       const subscription = event.data.object as Stripe.Subscription;
       const customerId = subscription.customer as string;
 
-      const user = db
-        .prepare("SELECT id FROM users WHERE stripe_customer_id = ?")
-        .get(customerId) as { id: number } | undefined;
+      const user = await db.get(
+        "SELECT id FROM users WHERE stripe_customer_id = ?",
+        customerId
+      ) as { id: number } | undefined;
 
-      db.prepare(
-        `UPDATE users SET subscription_status = 'canceled', updated_at = datetime('now')
-         WHERE stripe_customer_id = ?`
-      ).run(customerId);
+      await db.run(
+        `UPDATE users SET subscription_status = 'canceled', updated_at = NOW()
+         WHERE stripe_customer_id = ?`,
+        customerId
+      );
 
       if (user) {
-        db.prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id);
+        await db.run("DELETE FROM sessions WHERE user_id = ?", user.id);
       }
       break;
     }
@@ -98,10 +103,11 @@ export async function POST(req: NextRequest) {
       const invoice = event.data.object as Stripe.Invoice;
       const customerId = invoice.customer as string;
 
-      db.prepare(
-        `UPDATE users SET subscription_status = 'past_due', updated_at = datetime('now')
-         WHERE stripe_customer_id = ?`
-      ).run(customerId);
+      await db.run(
+        `UPDATE users SET subscription_status = 'past_due', updated_at = NOW()
+         WHERE stripe_customer_id = ?`,
+        customerId
+      );
       break;
     }
   }

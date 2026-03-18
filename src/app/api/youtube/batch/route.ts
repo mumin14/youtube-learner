@@ -5,7 +5,7 @@ import { fetchTranscript } from "@/lib/youtube";
 import { requireAuth } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return new Response("Unauthorized", { status: 401 });
   }
@@ -29,24 +29,17 @@ export async function POST(req: NextRequest) {
       const db = getDb();
 
       // Skip videos already in the database
-      const existingStmt = db.prepare(
-        `SELECT video_id FROM files WHERE video_id = ? AND user_id = ?`
-      );
-      const newVideoIds = videoIds.filter(
-        (id) => !existingStmt.get(id, userId)
-      );
+      const newVideoIds: string[] = [];
+      for (const id of videoIds) {
+        const existing = await db.get(
+          `SELECT video_id FROM files WHERE video_id = ? AND user_id = ?`,
+          id, userId
+        );
+        if (!existing) {
+          newVideoIds.push(id);
+        }
+      }
       const skippedCount = videoIds.length - newVideoIds.length;
-
-      const insertFile = db.prepare(
-        `INSERT INTO files (filename, original_name, size_bytes, status, source_type, youtube_url, video_id, user_id)
-         VALUES (?, ?, ?, 'chunked', 'youtube', ?, ?, ?)`
-      );
-      const insertChunk = db.prepare(
-        `INSERT INTO chunks (file_id, chunk_index, content, token_estimate, start_seconds, end_seconds) VALUES (?, ?, ?, ?, ?, ?)`
-      );
-      const updateFileChunks = db.prepare(
-        `UPDATE files SET chunk_count = ? WHERE id = ?`
-      );
 
       let completed = skippedCount;
       let succeeded = skippedCount;
@@ -94,13 +87,10 @@ export async function POST(req: NextRequest) {
           } else {
             const safeName = `yt-${videoId}`;
             const ytUrl = `https://youtube.com/watch?v=${videoId}`;
-            const info = insertFile.run(
-              safeName,
-              title,
-              Buffer.byteLength(text),
-              ytUrl,
-              videoId,
-              userId
+            const info = await db.run(
+              `INSERT INTO files (filename, original_name, size_bytes, status, source_type, youtube_url, video_id, user_id)
+               VALUES (?, ?, ?, 'chunked', 'youtube', ?, ?, ?)`,
+              safeName, title, Buffer.byteLength(text), ytUrl, videoId, userId
             );
             const fileId = info.lastInsertRowid as number;
 
@@ -108,20 +98,19 @@ export async function POST(req: NextRequest) {
               ? chunkTranscriptSegments(segments, title)
               : chunkText(text, title);
 
-            const tx = db.transaction(() => {
+            await db.transaction(async () => {
               for (let j = 0; j < chunks.length; j++) {
-                insertChunk.run(
-                  fileId,
-                  j,
-                  chunks[j].content,
-                  chunks[j].tokenEstimate,
-                  chunks[j].startSeconds ?? null,
-                  chunks[j].endSeconds ?? null
+                await db.run(
+                  `INSERT INTO chunks (file_id, chunk_index, content, token_estimate, start_seconds, end_seconds) VALUES (?, ?, ?, ?, ?, ?)`,
+                  fileId, j, chunks[j].content, chunks[j].tokenEstimate,
+                  chunks[j].startSeconds ?? null, chunks[j].endSeconds ?? null
                 );
               }
-              updateFileChunks.run(chunks.length, fileId);
+              await db.run(
+                `UPDATE files SET chunk_count = ? WHERE id = ?`,
+                chunks.length, fileId
+              );
             });
-            tx();
 
             succeeded++;
             completed++;

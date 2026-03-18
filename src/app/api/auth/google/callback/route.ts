@@ -4,10 +4,11 @@ import {
   getUserByEmail,
   updateUserGoogleInfo,
   createSession,
-  setSessionCookie,
+  signSessionId,
   isAdmin,
   upsertUser,
 } from "@/lib/auth";
+import { getDb } from "@/lib/db";
 
 interface GoogleUserInfo {
   id: string;
@@ -15,6 +16,18 @@ interface GoogleUserInfo {
   verified_email: boolean;
   name: string;
   picture: string;
+}
+
+/** Set session cookie directly on a response object (avoids cookies() API conflict with NextResponse.redirect) */
+function setSessionOnResponse(response: NextResponse, sessionId: string, expires: Date) {
+  const signed = signSessionId(sessionId);
+  response.cookies.set("session", signed, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    expires,
+  });
 }
 
 export async function GET(req: NextRequest) {
@@ -66,12 +79,12 @@ export async function GET(req: NextRequest) {
     const email = googleUser.email.toLowerCase();
 
     // Check if user exists by google_id or email
-    let user = getUserByGoogleId(googleUser.id) || getUserByEmail(email);
+    let user = (await getUserByGoogleId(googleUser.id)) || (await getUserByEmail(email));
 
     if (user) {
       // Update Google info if not already linked
       if (!user.google_id) {
-        updateUserGoogleInfo(
+        await updateUserGoogleInfo(
           user.id,
           googleUser.id,
           googleUser.name,
@@ -85,10 +98,9 @@ export async function GET(req: NextRequest) {
         user.subscription_status === "trialing" ||
         isAdmin(user.email)
       ) {
-        const { sessionId, expires } = createSession(user.id);
-        await setSessionCookie(sessionId, expires);
-
+        const { sessionId, expires } = await createSession(user.id);
         const response = NextResponse.redirect(`${appUrl}/app`);
+        setSessionOnResponse(response, sessionId, expires);
         response.cookies.delete("oauth_state");
         return response;
       }
@@ -96,17 +108,62 @@ export async function GET(req: NextRequest) {
 
     // Admin without existing user record → create user and go to app
     if (!user && isAdmin(email)) {
-      const newUser = upsertUser(email, "", null, "inactive", {
+      const newUser = await upsertUser(email, null, null, "inactive", {
         googleId: googleUser.id,
         name: googleUser.name,
         avatarUrl: googleUser.picture,
       });
-      const { sessionId, expires } = createSession(newUser.id);
-      await setSessionCookie(sessionId, expires);
-
+      const { sessionId, expires } = await createSession(newUser.id);
       const response = NextResponse.redirect(`${appUrl}/app`);
+      setSessionOnResponse(response, sessionId, expires);
       response.cookies.delete("oauth_state");
       return response;
+    }
+
+    // Check for promo code before falling through to Stripe
+    const promoPending = req.cookies.get("promo_pending")?.value;
+    if (promoPending) {
+      const db = getDb();
+      const trimmedCode = promoPending.trim().toUpperCase();
+      const promo = await db.get<{ id: number; max_uses: number }>(
+        `SELECT id, max_uses FROM promo_codes WHERE UPPER(code) = ?`,
+        trimmedCode
+      );
+
+      if (promo) {
+        const countRow = await db.get<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM promo_redemptions WHERE promo_code_id = ?`,
+          promo.id
+        );
+        const used = parseInt(countRow?.count || "0", 10);
+
+        if (used < promo.max_uses) {
+          // Valid promo code — activate user directly
+          const newUser = await upsertUser(email, null, null, "active", {
+            googleId: googleUser.id,
+            name: googleUser.name,
+            avatarUrl: googleUser.picture,
+          });
+          // Clear period end for lifetime access
+          await db.run(
+            `UPDATE users SET current_period_end = NULL WHERE id = ?`,
+            newUser.id
+          );
+          // Record redemption
+          await db.run(
+            `INSERT INTO promo_redemptions (promo_code_id, user_id) VALUES (?, ?)
+             ON CONFLICT (promo_code_id, user_id) DO NOTHING`,
+            promo.id,
+            newUser.id
+          );
+          const { sessionId, expires } = await createSession(newUser.id);
+          const response = NextResponse.redirect(`${appUrl}/app`);
+          setSessionOnResponse(response, sessionId, expires);
+          response.cookies.delete("oauth_state");
+          response.cookies.delete("promo_pending");
+          return response;
+        }
+      }
     }
 
     // No user or inactive subscription → send to Stripe checkout
@@ -121,6 +178,7 @@ export async function GET(req: NextRequest) {
       `${appUrl}/api/stripe/checkout?email=${encodeURIComponent(email)}`
     );
     response.cookies.delete("oauth_state");
+    response.cookies.delete("promo_pending");
     response.cookies.set("google_pending", googleData, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -130,7 +188,8 @@ export async function GET(req: NextRequest) {
     });
     return response;
   } catch (err) {
-    console.error("Google OAuth error:", err);
-    return NextResponse.redirect(`${appUrl}/?error=oauth_failed`);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Google OAuth error:", message, err);
+    return NextResponse.redirect(`${appUrl}/?error=oauth_failed&detail=${encodeURIComponent(message)}`);
   }
 }

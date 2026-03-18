@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect } from "react";
 import {
-  Upload,
   ClipboardCheck,
   Library,
   MessageCircle,
@@ -10,16 +9,21 @@ import {
   ChevronDown,
   CreditCard,
   LogOut,
+  CalendarDays,
+  BookOpen,
+  Home,
 } from "lucide-react";
 import { useSession } from "@/hooks/use-session";
 import { useAppView, type AppView } from "@/components/app-shell";
 import { ThemeToggle } from "@/components/theme-toggle";
 
-const NAV_ITEMS: { view: AppView; label: string; icon: typeof Upload }[] = [
-  { view: "upload", label: "Upload", icon: Upload },
-  { view: "action-items", label: "Action Items", icon: ClipboardCheck },
+const NAV_ITEMS: { view: AppView; label: string; icon: typeof ClipboardCheck }[] = [
+  { view: "home", label: "Home", icon: Home },
   { view: "library", label: "Library", icon: Library },
-  { view: "ask-ai", label: "Ask AI", icon: MessageCircle },
+  { view: "action-items", label: "Action Items", icon: ClipboardCheck },
+  { view: "calendar", label: "Calendar", icon: CalendarDays },
+  { view: "my-work", label: "My Work", icon: BookOpen },
+  { view: "ask-ai", label: "Ask Socraty", icon: MessageCircle },
   { view: "learner-settings", label: "Learner Settings", icon: Settings },
 ];
 

@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { ActionItem, ActionItemSource } from "@/types";
+import type { ActionItem, ActionItemSource, Folder } from "@/types";
+import { useAppView } from "@/components/app-shell";
 
 interface AssessmentResult {
   score: number;
@@ -32,6 +33,20 @@ function getScoreColor(score: number) {
   if (score >= 60) return "bg-blue-500";
   if (score >= 40) return "bg-amber-500";
   return "bg-red-500";
+}
+
+function getScoreStrokeColor(score: number) {
+  if (score >= 80) return "text-emerald-500";
+  if (score >= 60) return "text-blue-500";
+  if (score >= 40) return "text-amber-500";
+  return "text-red-500";
+}
+
+function getGradeFeedback(grade: string): string {
+  if (grade.startsWith("A")) return "You've demonstrated mastery of this concept.";
+  if (grade.startsWith("B")) return "Strong understanding. Tighten up the areas below and you'll own this.";
+  if (grade.startsWith("C")) return "You're building a foundation. Revisit the source material and try again.";
+  return "This needs more time. Re-read the source, then take another shot.";
 }
 
 function NotesModal({
@@ -109,17 +124,22 @@ function NotesModal({
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {/* Assessment result popup */}
-          {assessment && (
-            <div className="rounded-xl border-2 border-primary/20 bg-primary/5 p-5 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+          {assessment && (() => {
+            const circumference = 2 * Math.PI * 15.5;
+            const targetOffset = circumference - (assessment.score / 100) * circumference;
+            const isHighGrade = assessment.grade.startsWith("A");
+            return (
+            <div className={`rounded-xl border-2 bg-primary/5 p-5 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300 ${isHighGrade ? "border-emerald-300 dark:border-emerald-700" : "border-primary/20"}`}>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">Your Grade</p>
                   <div className="flex items-baseline gap-3 mt-1">
-                    <span className={`text-4xl font-bold ${getGradeColor(assessment.grade)}`}>
+                    <span className={`text-4xl font-bold animate-grade-reveal ${getGradeColor(assessment.grade)}`}>
                       {assessment.grade}
                     </span>
                     <span className="text-lg text-muted-foreground">{assessment.score}/100</span>
                   </div>
+                  <p className="text-sm text-muted-foreground mt-2">{getGradeFeedback(assessment.grade)}</p>
                 </div>
                 <div className="w-16 h-16 relative">
                   <svg className="w-16 h-16 -rotate-90" viewBox="0 0 36 36">
@@ -127,10 +147,14 @@ function NotesModal({
                     <circle
                       cx="18" cy="18" r="15.5" fill="none"
                       strokeWidth="3"
-                      strokeDasharray={`${assessment.score} ${100 - assessment.score}`}
                       strokeLinecap="round"
-                      className={getScoreColor(assessment.score)}
-                      style={{ stroke: "currentColor" }}
+                      className={`animate-score-fill ${getScoreStrokeColor(assessment.score)}`}
+                      style={{
+                        "--circumference": circumference,
+                        "--target-offset": targetOffset,
+                        strokeDasharray: circumference,
+                        stroke: "currentColor",
+                      } as React.CSSProperties}
                     />
                   </svg>
                   <span className="absolute inset-0 flex items-center justify-center text-sm font-bold">
@@ -140,6 +164,7 @@ function NotesModal({
               </div>
 
               {/* Strengths */}
+              {assessment.strengths.length > 0 && (
               <div>
                 <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 mb-2">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -156,8 +181,10 @@ function NotesModal({
                   ))}
                 </ul>
               </div>
+              )}
 
               {/* Improvements */}
+              {assessment.improvements.length > 0 && (
               <div>
                 <p className="text-sm font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1.5 mb-2">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -174,6 +201,7 @@ function NotesModal({
                   ))}
                 </ul>
               </div>
+              )}
 
               <button
                 onClick={() => setAssessment(null)}
@@ -182,7 +210,8 @@ function NotesModal({
                 Dismiss
               </button>
             </div>
-          )}
+            );
+          })()}
 
           {/* Notes input */}
           <div className="space-y-2">
@@ -226,7 +255,12 @@ function NotesModal({
           ) : pastNotes.length > 0 && (
             <div className="space-y-3">
               <p className="text-xs font-medium tracking-widest uppercase text-muted-foreground">Past Submissions</p>
-              {pastNotes.map((note) => (
+              {pastNotes.map((note, idx) => {
+                const prevNote = pastNotes[idx + 1];
+                const prevScore = prevNote?.assessment?.score;
+                const curScore = note.assessment?.score;
+                const scoreDelta = curScore != null && prevScore != null ? curScore - prevScore : null;
+                return (
                 <div key={note.id} className="rounded-xl border border-border/50 p-4 space-y-3">
                   <p className="text-sm text-foreground whitespace-pre-wrap">{note.content}</p>
                   {note.assessment && (
@@ -235,6 +269,14 @@ function NotesModal({
                         {note.assessment.grade}
                       </span>
                       <span className="text-sm text-muted-foreground">{note.assessment.score}/100</span>
+                      {scoreDelta !== null && scoreDelta !== 0 && (
+                        <span className={`text-xs font-medium flex items-center gap-0.5 ${scoreDelta > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                          <svg className={`w-3 h-3 ${scoreDelta < 0 ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 15l7-7 7 7" />
+                          </svg>
+                          {Math.abs(scoreDelta)}
+                        </span>
+                      )}
                       <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
                         <div
                           className={`h-full rounded-full ${getScoreColor(note.assessment.score)}`}
@@ -247,7 +289,8 @@ function NotesModal({
                     {new Date(note.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </p>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -306,7 +349,17 @@ const DIFFICULTY_CONFIG = {
   },
 } as const;
 
+function buildAskSocratyPrompt(item: ActionItem): string {
+  let prompt = `I have an action item: "${item.title}"\n\nDescription: ${item.description}`;
+  if (item.source_context) prompt += `\n\nSource context: "${item.source_context}"`;
+  if (item.topic) prompt += `\nTopic: ${item.topic}`;
+  prompt += `\nDifficulty: ${item.difficulty}`;
+  prompt += `\n\nPlease help me understand:\n1. What this action item is asking me to do\n2. What I need to research and learn about\n3. Key questions I should explore to deepen my understanding\n4. What I'll gain from completing this task\n5. Tips for writing strong notes on this topic`;
+  return prompt;
+}
+
 export function ActionItemsTab() {
+  const { askAboutActionItem } = useAppView();
   const [items, setItems] = useState<ActionItem[]>([]);
   const [sources, setSources] = useState<ActionItemSource[]>([]);
   const [topics, setTopics] = useState<string[]>([]);
@@ -315,6 +368,8 @@ export function ActionItemsTab() {
   const [reviewCount, setReviewCount] = useState(0);
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>("easy");
   const [selectedSource, setSelectedSource] = useState<number | null>(null);
+  const [selectedFolder, setSelectedFolder] = useState<number | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [reviewMode, setReviewMode] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
@@ -361,6 +416,9 @@ export function ActionItemsTab() {
       if (selectedSource !== null) {
         params.set("fileId", String(selectedSource));
       }
+      if (selectedFolder !== null) {
+        params.set("folderId", String(selectedFolder));
+      }
       if (reviewMode) {
         params.set("review", "true");
       }
@@ -378,11 +436,18 @@ export function ActionItemsTab() {
     } finally {
       setLoading(false);
     }
-  }, [selectedDifficulty, selectedTopic, selectedSource, reviewMode]);
+  }, [selectedDifficulty, selectedTopic, selectedSource, selectedFolder, reviewMode]);
 
   useEffect(() => {
     fetchItems();
   }, [fetchItems]);
+
+  useEffect(() => {
+    fetch("/api/folders")
+      .then((res) => res.json())
+      .then((data) => setFolders(data.folders ?? []))
+      .catch(() => {});
+  }, []);
 
   // Poll for new items while processing is running
   useEffect(() => {
@@ -484,8 +549,9 @@ export function ActionItemsTab() {
     if (!scopeText.trim() || scopeLoading) return;
     setScopeLoading(true);
     try {
-      const body: { scope: string; fileId?: number } = { scope: scopeText.trim() };
+      const body: { scope: string; fileId?: number; folderId?: number } = { scope: scopeText.trim() };
       if (selectedSource !== null) body.fileId = selectedSource;
+      if (selectedFolder !== null) body.folderId = selectedFolder;
       const res = await fetch("/api/action-items/scope", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -504,7 +570,7 @@ export function ActionItemsTab() {
     } finally {
       setScopeLoading(false);
     }
-  }, [scopeText, scopeLoading, selectedSource, fetchItems]);
+  }, [scopeText, scopeLoading, selectedSource, selectedFolder, fetchItems]);
 
   const [showCompleted, setShowCompleted] = useState(false);
 
@@ -583,11 +649,11 @@ export function ActionItemsTab() {
               return (
                 <Card
                   key={item.id}
-                  className="overflow-hidden border-border/50 transition-all hover:border-border"
+                  className="overflow-hidden border-border/50 transition-all duration-500 hover:border-border"
                 >
                   <CardContent className="p-0">
                     <div className="flex">
-                      <div className={`flex-1 p-4 transition-opacity ${item.completed ? "opacity-60" : ""}`}>
+                      <div className={`flex-1 p-4 transition-opacity duration-500 ${item.completed ? "opacity-60" : ""}`}>
                         <div className="flex items-start gap-3">
                           <button
                             onClick={(e) => {
@@ -602,7 +668,7 @@ export function ActionItemsTab() {
                           >
                             {item.completed ? (
                               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                <path className="animate-check-draw" strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                               </svg>
                             ) : null}
                           </button>
@@ -669,6 +735,18 @@ export function ActionItemsTab() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                               </svg>
                               Upload notes to get graded
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                askAboutActionItem(item.file_id, buildAskSocratyPrompt(item));
+                              }}
+                              className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-violet-50 dark:bg-violet-950 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900 transition-colors"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                              </svg>
+                              Ask Socraty
                             </button>
                             <span
                               className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${cfg.bg} ${cfg.text}`}
@@ -812,7 +890,7 @@ export function ActionItemsTab() {
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            Review
+            Worth revisiting
             {reviewCount > 0 && (
               <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                 reviewMode ? "bg-primary-foreground/20" : "bg-primary/10 text-primary"
@@ -865,16 +943,19 @@ export function ActionItemsTab() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {sources.length > 0 && (
+          {folders.length > 0 && (
             <select
               className="border rounded-lg px-3 py-1.5 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition-all max-w-[240px] truncate"
-              value={selectedSource ?? ""}
-              onChange={(e) => setSelectedSource(e.target.value ? Number(e.target.value) : null)}
+              value={selectedFolder ?? ""}
+              onChange={(e) => {
+                setSelectedFolder(e.target.value ? Number(e.target.value) : null);
+                setSelectedSource(null);
+              }}
             >
-              <option value="">All sources ({totalItems})</option>
-              {sources.map((src) => (
-                <option key={src.id} value={src.id}>
-                  {src.source_type === "youtube" ? "\u25B6 " : src.source_type === "article" ? "\uD83D\uDCDA " : "\uD83D\uDCC4 "}{src.original_name} ({src.item_count})
+              <option value="">All folders ({totalItems})</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name} ({f.file_count ?? 0} resources)
                 </option>
               ))}
             </select>
@@ -918,7 +999,7 @@ export function ActionItemsTab() {
           <p className="text-sm mt-2 max-w-xs mx-auto leading-relaxed">
             {selectedDifficulty === "completed"
               ? "Complete action items by ticking the checkbox, and they\u2019ll appear here."
-              : "Ingest a YouTube video, then click \u201CGenerate Action Items\u201D to get a difficulty-sorted learning path."
+              : "Your study plan will appear here once you add something to your library."
             }
           </p>
         </div>
@@ -962,17 +1043,26 @@ export function ActionItemsTab() {
           )}
 
           {/* Empty active state when all are completed */}
-          {Object.keys(groupedBySource).length === 0 && completedItems.length > 0 && (
+          {Object.keys(groupedBySource).length === 0 && completedItems.length > 0 && (() => {
+            const tierLabel = DIFFICULTY_CONFIG[selectedDifficulty as keyof typeof DIFFICULTY_CONFIG]?.label ?? selectedDifficulty;
+            const nextTier = selectedDifficulty === "easy" ? "Solidification" : selectedDifficulty === "medium" ? "Mastery" : null;
+            return (
             <div className="text-center py-12 text-muted-foreground">
-              <div className="mx-auto w-14 h-14 rounded-full bg-emerald-100 dark:bg-emerald-900 flex items-center justify-center mb-4">
+              <div className="mx-auto w-14 h-14 rounded-full bg-emerald-100 dark:bg-emerald-900 flex items-center justify-center mb-4 animate-tier-glow">
                 <svg className="w-7 h-7 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  <path className="animate-check-draw" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="text-lg font-semibold text-foreground">All done!</p>
-              <p className="text-sm mt-1">You&apos;ve completed all {DIFFICULTY_CONFIG[selectedDifficulty as keyof typeof DIFFICULTY_CONFIG]?.label ?? selectedDifficulty} tasks.</p>
+              <p className="text-lg font-semibold text-foreground">{tierLabel} complete.</p>
+              <p className="text-sm mt-1">
+                {nextTier
+                  ? `You've built a strong foundation — move to ${nextTier} when you're ready.`
+                  : "You've worked through every level. Revisit anything worth reinforcing."
+                }
+              </p>
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
 

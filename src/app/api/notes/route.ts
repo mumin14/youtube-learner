@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { callClaude } from "@/lib/claude";
 import { requireAuth } from "@/lib/auth";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+import { noteCreateSchema, validateBody } from "@/lib/validations";
 
 const ASSESSMENT_PROMPT = (
   actionTitle: string,
@@ -42,30 +44,36 @@ Respond with ONLY valid JSON in this exact format:
 }`;
 
 export async function POST(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { actionItemId, content } = (await req.json()) as {
-    actionItemId: number;
-    content: string;
-  };
+  const body = await req.json();
+  const parsed = validateBody(noteCreateSchema, body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
+  }
+  const { actionItemId, content } = parsed.data;
 
-  if (!actionItemId || !content?.trim()) {
-    return NextResponse.json({ error: "Missing actionItemId or content" }, { status: 400 });
+  const rl = checkRateLimit(`${user.id}:notes`, RATE_LIMITS.ai);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many submissions. Please slow down." },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+    );
   }
 
   const db = getDb();
 
   // Get the action item + source context
-  const actionItem = db.prepare(`
+  const actionItem = await db.get(`
     SELECT ai.*, c.content as chunk_content
     FROM action_items ai
     JOIN chunks c ON c.id = ai.chunk_id
     JOIN files f ON f.id = ai.file_id AND f.user_id = ?
     WHERE ai.id = ?
-  `).get(user.id, actionItemId) as {
+  `, user.id, actionItemId) as {
     id: number;
     title: string;
     description: string;
@@ -78,10 +86,10 @@ export async function POST(req: NextRequest) {
   }
 
   // Save the note
-  const noteResult = db.prepare(`
+  const noteResult = await db.run(`
     INSERT INTO learning_notes (action_item_id, user_id, content)
     VALUES (?, ?, ?)
-  `).run(actionItemId, user.id, content.trim());
+  `, actionItemId, user.id, content.trim());
 
   const noteId = noteResult.lastInsertRowid as number;
 
@@ -111,16 +119,11 @@ export async function POST(req: NextRequest) {
     };
 
     // Save assessment
-    db.prepare(`
+    await db.run(`
       INSERT INTO assessments (note_id, action_item_id, score, grade, strengths, improvements)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      noteId,
-      actionItemId,
-      assessment.score,
-      assessment.grade,
-      JSON.stringify(assessment.strengths),
-      JSON.stringify(assessment.improvements)
+    `, noteId, actionItemId, assessment.score, assessment.grade,
+      JSON.stringify(assessment.strengths), JSON.stringify(assessment.improvements)
     );
 
     return NextResponse.json({
@@ -144,7 +147,7 @@ export async function POST(req: NextRequest) {
 
 // GET - fetch notes + assessments for an action item
 export async function GET(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -156,13 +159,13 @@ export async function GET(req: NextRequest) {
 
   const db = getDb();
 
-  const notes = db.prepare(`
+  const notes = await db.all(`
     SELECT ln.*, a.score, a.grade, a.strengths, a.improvements
     FROM learning_notes ln
     LEFT JOIN assessments a ON a.note_id = ln.id
     WHERE ln.action_item_id = ? AND ln.user_id = ?
     ORDER BY ln.created_at DESC
-  `).all(Number(actionItemId), user.id) as Array<{
+  `, Number(actionItemId), user.id) as Array<{
     id: number;
     content: string;
     created_at: string;

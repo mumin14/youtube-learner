@@ -8,6 +8,7 @@ import {
   clearSessionCookie,
   getUserByEmail,
 } from "@/lib/auth";
+import { verifyPassword } from "@/lib/password";
 import { stripe } from "@/lib/stripe";
 
 // GET — check current session
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid session" }, { status: 401 });
   }
 
-  const user = getSessionUser(sessionId);
+  const user = await getSessionUser(sessionId);
   if (!user) {
     return NextResponse.json({ error: "Session expired" }, { status: 401 });
   }
@@ -39,20 +40,37 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// POST — restore session by email
+// POST — login by email+password or restore session by email only
 export async function POST(req: NextRequest) {
-  const { email } = (await req.json()) as { email: string };
+  const { email, password } = (await req.json()) as { email: string; password?: string };
 
   if (!email?.trim()) {
     return NextResponse.json({ error: "Email is required" }, { status: 400 });
   }
 
-  const user = getUserByEmail(email.trim().toLowerCase());
+  const user = await getUserByEmail(email.trim().toLowerCase());
   if (!user) {
     return NextResponse.json(
       { error: "No account found with this email" },
       { status: 404 }
     );
+  }
+
+  // If user has a password set, require it
+  if (user.password_hash) {
+    if (!password) {
+      return NextResponse.json(
+        { error: "Password is required" },
+        { status: 400 }
+      );
+    }
+    const valid = await verifyPassword(password, user.password_hash);
+    if (!valid) {
+      return NextResponse.json(
+        { error: "Incorrect password" },
+        { status: 401 }
+      );
+    }
   }
 
   // Verify subscription is still active
@@ -82,7 +100,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { sessionId, expires } = createSession(user.id);
+  const { sessionId, expires } = await createSession(user.id);
   await setSessionCookie(sessionId, expires);
 
   return NextResponse.json({
@@ -100,7 +118,7 @@ export async function DELETE(req: NextRequest) {
   if (cookie) {
     const sessionId = verifySessionId(cookie);
     if (sessionId) {
-      deleteSession(sessionId);
+      await deleteSession(sessionId);
     }
   }
   await clearSessionCookie();

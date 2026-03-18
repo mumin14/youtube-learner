@@ -131,6 +131,25 @@
   }
 }
 
+@keyframes scroll-left {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+@keyframes scroll-right {
+  0% { transform: translateX(-50%); }
+  100% { transform: translateX(0); }
+}
+.animate-scroll-left {
+  animation: scroll-left 40s linear infinite;
+}
+.animate-scroll-right {
+  animation: scroll-right 40s linear infinite;
+}
+.pause-on-hover:hover .animate-scroll-left,
+.pause-on-hover:hover .animate-scroll-right {
+  animation-play-state: paused;
+}
+
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
@@ -140,4 +159,117 @@
   background: linear-gradient(90deg, transparent 0%, oklch(0.28 0.07 260 / 0.1) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2s linear infinite;
+}
+
+/* Chat markdown prose styles */
+.prose-chat { font-size: 0.875rem; line-height: 1.625; }
+.prose-chat h1 { font-size: 1.125rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.375rem; }
+.prose-chat h2 { font-size: 1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.25rem; }
+.prose-chat h3 { font-size: 0.875rem; font-weight: 600; margin-top: 0.75rem; margin-bottom: 0.25rem; }
+.prose-chat p { margin-bottom: 0.5rem; }
+.prose-chat p:last-child { margin-bottom: 0; }
+.prose-chat ul, .prose-chat ol { padding-left: 1.25rem; margin-bottom: 0.5rem; }
+.prose-chat ul { list-style-type: disc; }
+.prose-chat ol { list-style-type: decimal; }
+.prose-chat li { margin-bottom: 0.125rem; }
+.prose-chat li > p { margin-bottom: 0.125rem; }
+.prose-chat strong { font-weight: 600; }
+.prose-chat em { font-style: italic; }
+.prose-chat code { background: var(--muted); padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.85em; font-family: var(--font-mono); }
+.prose-chat pre { background: var(--muted); padding: 0.75rem; border-radius: 0.5rem; overflow-x: auto; margin-bottom: 0.5rem; }
+.prose-chat pre code { background: none; padding: 0; }
+.prose-chat blockquote { border-left: 3px solid var(--border); padding-left: 0.75rem; margin-left: 0; margin-bottom: 0.5rem; color: var(--muted-foreground); }
+.prose-chat table { border-collapse: collapse; margin-bottom: 0.5rem; width: 100%; font-size: 0.8125rem; }
+.prose-chat th, .prose-chat td { border: 1px solid var(--border); padding: 0.375rem 0.5rem; text-align: left; }
+.prose-chat th { font-weight: 600; background: var(--muted); }
+.prose-chat hr { border-color: var(--border); margin: 0.75rem 0; }
+.prose-chat a { color: var(--primary); text-decoration: underline; }
+
+/* Integration orbit animations */
+@keyframes orbit-inner {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes orbit-outer {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+@keyframes counter-orbit-inner {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+@keyframes counter-orbit-outer {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-orbit-inner {
+  animation: orbit-inner 45s linear infinite;
+}
+.animate-orbit-outer {
+  animation: orbit-outer 60s linear infinite;
+}
+.animate-counter-orbit-inner {
+  animation: counter-orbit-inner 45s linear infinite;
+}
+.animate-counter-orbit-outer {
+  animation: counter-orbit-outer 60s linear infinite;
+}
+@keyframes orbit-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes counter-orbit-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+.animate-orbit-slow {
+  animation: orbit-slow 75s linear infinite;
+}
+.animate-counter-orbit-slow {
+  animation: counter-orbit-slow 75s linear infinite;
+}
+
+/* Preview demo card fade-slide animation */
+@keyframes fadeSlideIn {
+  0% { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Score ring fill animation */
+@keyframes score-fill {
+  from { stroke-dashoffset: var(--circumference); }
+  to { stroke-dashoffset: var(--target-offset); }
+}
+.animate-score-fill {
+  animation: score-fill 1s ease-out forwards;
+}
+
+/* Grade badge reveal */
+@keyframes grade-reveal {
+  0% { transform: scale(0.8); opacity: 0; }
+  70% { transform: scale(1.05); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-grade-reveal {
+  animation: grade-reveal 0.5s ease-out forwards;
+}
+
+/* Checkmark stroke draw-in */
+@keyframes check-draw {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+.animate-check-draw {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: check-draw 0.3s ease-out forwards;
+}
+
+/* Subtle pulsing glow for tier completion */
+@keyframes tier-glow {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.28 0.07 260 / 0.2); }
+  50% { box-shadow: 0 0 12px 4px oklch(0.28 0.07 260 / 0.15); }
+}
+.animate-tier-glow {
+  animation: tier-glow 2s ease-in-out 2;
 }

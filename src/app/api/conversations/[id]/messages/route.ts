@@ -6,7 +6,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -16,9 +16,10 @@ export async function POST(
   const db = getDb();
 
   // Verify conversation belongs to user
-  const conversation = db
-    .prepare(`SELECT * FROM conversations WHERE id = ? AND user_id = ?`)
-    .get(convId, user.id) as { id: number; title: string } | undefined;
+  const conversation = await db.get(
+    `SELECT * FROM conversations WHERE id = ? AND user_id = ?`,
+    convId, user.id
+  ) as { id: number; title: string } | undefined;
 
   if (!conversation) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -29,13 +30,15 @@ export async function POST(
     assistantMessage: string;
   };
 
-  const insertMsg = db.prepare(
-    `INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)`
-  );
-
-  const saveMessages = db.transaction(() => {
-    insertMsg.run(convId, "user", userMessage);
-    insertMsg.run(convId, "assistant", assistantMessage);
+  await db.transaction(async () => {
+    await db.run(
+      `INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)`,
+      convId, "user", userMessage
+    );
+    await db.run(
+      `INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)`,
+      convId, "assistant", assistantMessage
+    );
 
     // Auto-set title from first user message if still default
     if (conversation.title === "New Chat") {
@@ -43,18 +46,17 @@ export async function POST(
         userMessage.length > 50
           ? userMessage.slice(0, 50) + "..."
           : userMessage;
-      db.prepare(`UPDATE conversations SET title = ? WHERE id = ?`).run(
-        title,
-        convId
+      await db.run(
+        `UPDATE conversations SET title = ? WHERE id = ?`,
+        title, convId
       );
     }
 
-    db.prepare(
-      `UPDATE conversations SET updated_at = datetime('now') WHERE id = ?`
-    ).run(convId);
+    await db.run(
+      `UPDATE conversations SET updated_at = NOW() WHERE id = ?`,
+      convId
+    );
   });
-
-  saveMessages();
 
   return NextResponse.json({ ok: true }, { status: 201 });
 }

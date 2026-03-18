@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
+import { parsePagination } from "@/lib/api-utils";
+import { actionItemPatchSchema, validateBody } from "@/lib/validations";
 
 export async function GET(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -15,6 +17,7 @@ export async function GET(req: NextRequest) {
   const db = getDb();
 
   const fileId = req.nextUrl.searchParams.get("fileId");
+  const folderId = req.nextUrl.searchParams.get("folderId");
 
   let query = `
     SELECT ai.*, f.original_name as filename, f.source_type, f.video_id, f.youtube_url,
@@ -25,6 +28,11 @@ export async function GET(req: NextRequest) {
     WHERE 1=1
   `;
   const params: (string | number)[] = [user.id];
+
+  if (folderId) {
+    query += ` AND f.folder_id = ?`;
+    params.push(folderId);
+  }
 
   if (difficulty) {
     const difficulties = difficulty.split(",");
@@ -49,11 +57,30 @@ export async function GET(req: NextRequest) {
 
   if (review === "true") {
     query += ` AND (
-      (ai.completed = 1 AND ai.completed_at < datetime('now', '-3 days'))
+      (ai.completed = 1 AND ai.completed_at < NOW() - INTERVAL '3 days')
       OR
-      (ai.completed = 0 AND ai.created_at < datetime('now', '-7 days'))
+      (ai.completed = 0 AND ai.created_at < NOW() - INTERVAL '7 days')
     )`;
   }
+
+  // Count query shares same WHERE clause
+  let countQuery = `
+    SELECT COUNT(*) as cnt
+    FROM action_items ai
+    JOIN files f ON f.id = ai.file_id AND f.user_id = ?
+    LEFT JOIN chunks c ON c.id = ai.chunk_id
+    WHERE 1=1
+  `;
+  // Rebuild the same WHERE conditions for count
+  const countParams: (string | number)[] = [user.id];
+  if (folderId) { countQuery += ` AND f.folder_id = ?`; countParams.push(folderId); }
+  if (difficulty) { const ds = difficulty.split(","); countQuery += ` AND ai.difficulty IN (${ds.map(() => "?").join(",")})`; countParams.push(...ds); }
+  if (topic) { countQuery += ` AND ai.topic = ?`; countParams.push(topic); }
+  if (fileId) { countQuery += ` AND ai.file_id = ?`; countParams.push(fileId); }
+  if (completedOnly === "true") { countQuery += ` AND ai.completed = 1`; }
+  if (review === "true") { countQuery += ` AND ((ai.completed = 1 AND ai.completed_at < NOW() - INTERVAL '3 days') OR (ai.completed = 0 AND ai.created_at < NOW() - INTERVAL '7 days'))`; }
+
+  const { limit, offset } = parsePagination(req.nextUrl.searchParams, { limit: 100, maxLimit: 500 });
 
   query += ` ORDER BY
     f.id,
@@ -62,52 +89,50 @@ export async function GET(req: NextRequest) {
       WHEN 'medium' THEN 2
       WHEN 'hard' THEN 3
     END,
-    ai.topic, ai.id`;
+    ai.topic, ai.id
+    LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
 
   // Prepare all metadata queries upfront for batch execution
-  const topicsStmt = db.prepare(
+  const folderScope = folderId ? ` AND f.folder_id = ?` : "";
+  const metaParams = folderId ? [user.id, Number(folderId)] : [user.id];
+
+  const topicsQuery =
     `SELECT DISTINCT ai.topic FROM action_items ai
-     JOIN files f ON f.id = ai.file_id AND f.user_id = ?
-     WHERE ai.topic IS NOT NULL ORDER BY ai.topic`
-  );
-  const countsStmt = db.prepare(
+     JOIN files f ON f.id = ai.file_id AND f.user_id = ?${folderScope}
+     WHERE ai.topic IS NOT NULL ORDER BY ai.topic`;
+  const countsQuery =
     `SELECT ai.difficulty, COUNT(*) as count,
        SUM(CASE WHEN ai.completed = 1 THEN 1 ELSE 0 END) as completed_count
      FROM action_items ai
-     JOIN files f ON f.id = ai.file_id AND f.user_id = ?
-     GROUP BY ai.difficulty`
-  );
-  const sourcesStmt = db.prepare(
+     JOIN files f ON f.id = ai.file_id AND f.user_id = ?${folderScope}
+     GROUP BY ai.difficulty`;
+  const sourcesQuery =
     `SELECT f.id, f.original_name, f.source_type, f.video_id,
        COUNT(ai.id) as item_count
      FROM files f
      JOIN action_items ai ON ai.file_id = f.id
-     WHERE f.user_id = ?
+     WHERE f.user_id = ?${folderScope}
      GROUP BY f.id
-     ORDER BY f.original_name`
-  );
-  const reviewStmt = db.prepare(
+     ORDER BY f.original_name`;
+  const reviewQuery =
     `SELECT COUNT(*) as count FROM action_items ai
-     JOIN files f ON f.id = ai.file_id AND f.user_id = ?
-     WHERE (ai.completed = 1 AND ai.completed_at < datetime('now', '-3 days'))
-        OR (ai.completed = 0 AND ai.created_at < datetime('now', '-7 days'))`
-  );
-  const itemsStmt = db.prepare(query);
+     JOIN files f ON f.id = ai.file_id AND f.user_id = ?${folderScope}
+     WHERE (ai.completed = 1 AND ai.completed_at < NOW() - INTERVAL '3 days')
+        OR (ai.completed = 0 AND ai.created_at < NOW() - INTERVAL '7 days')`;
 
-  // Run all queries in a single transaction for consistency and speed
-  const fetchAll = db.transaction(() => {
-    const items = itemsStmt.all(...params);
-    const topics = topicsStmt.all(user.id) as { topic: string }[];
-    const allCounts = countsStmt.all(user.id) as { difficulty: string; count: number; completed_count: number }[];
-    const sources = sourcesStmt.all(user.id) as { id: number; original_name: string; source_type: string; video_id: string | null; item_count: number }[];
-    const reviewCount = (reviewStmt.get(user.id) as { count: number }).count;
-    return { items, topics, allCounts, sources, reviewCount };
-  });
-
-  const { items, topics, allCounts, sources, reviewCount } = fetchAll();
+  const items = await db.all(query, ...params);
+  const total = ((await db.get(countQuery, ...countParams)) as { cnt: number }).cnt;
+  const topics = await db.all(topicsQuery, ...metaParams) as { topic: string }[];
+  const allCounts = await db.all(countsQuery, ...metaParams) as { difficulty: string; count: number; completed_count: number }[];
+  const sources = await db.all(sourcesQuery, ...metaParams) as { id: number; original_name: string; source_type: string; video_id: string | null; item_count: number }[];
+  const reviewCount = ((await db.get(reviewQuery, ...metaParams)) as { count: number }).count;
 
   return NextResponse.json({
     items,
+    total,
+    limit,
+    offset,
     topics: topics.map((t) => t.topic),
     sources,
     counts: {
@@ -125,26 +150,28 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id, completed } = await req.json();
-
-  if (typeof id !== "number" || typeof completed !== "boolean") {
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  const body = await req.json();
+  const parsed = validateBody(actionItemPatchSchema, body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
+  const { id, completed } = parsed.data;
 
   const db = getDb();
   const completedInt = completed ? 1 : 0;
   const completedAt = completed ? new Date().toISOString() : null;
 
   // Only update if the action item belongs to this user's files
-  const result = db.prepare(
+  const result = await db.run(
     `UPDATE action_items SET completed = ?, completed_at = ?
-     WHERE id = ? AND file_id IN (SELECT id FROM files WHERE user_id = ?)`
-  ).run(completedInt, completedAt, id, user.id);
+     WHERE id = ? AND file_id IN (SELECT id FROM files WHERE user_id = ?)`,
+    completedInt, completedAt, id, user.id
+  );
 
   if (result.changes === 0) {
     return NextResponse.json({ error: "Item not found" }, { status: 404 });

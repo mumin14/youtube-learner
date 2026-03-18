@@ -12,12 +12,12 @@ export function useProcessingStatus() {
     progress: 0,
   });
 
-  const startProcessing = useCallback(async (force = true) => {
+  const startProcessing = useCallback(async (force = true, folderId?: number) => {
     try {
       const res = await fetch("/api/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force }),
+        body: JSON.stringify({ force, folderId }),
       });
       const data = await res.json();
 

@@ -3,23 +3,22 @@ import { getDb } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const db = getDb();
-  const items = db
-    .prepare(
-      `SELECT ai.difficulty, ai.title, ai.description, ai.topic, ai.completed,
-              f.original_name as filename, f.source_type
-       FROM action_items ai
-       JOIN files f ON f.id = ai.file_id AND f.user_id = ?
-       ORDER BY f.id,
-         CASE ai.difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 WHEN 'hard' THEN 3 END,
-         ai.topic, ai.id`
-    )
-    .all(user.id) as {
+  const items = await db.all(
+    `SELECT ai.difficulty, ai.title, ai.description, ai.topic, ai.completed,
+            f.original_name as filename, f.source_type
+     FROM action_items ai
+     JOIN files f ON f.id = ai.file_id AND f.user_id = ?
+     ORDER BY f.id,
+       CASE ai.difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 WHEN 'hard' THEN 3 END,
+       ai.topic, ai.id`,
+    user.id
+  ) as {
     difficulty: string;
     title: string;
     description: string;

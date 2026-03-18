@@ -5,13 +5,14 @@ import type { ChatMessage } from "@/types";
 
 interface UseChatOptions {
   fileId?: number;
+  folderId?: number;
   conversationId?: number | null;
   onConversationUpdate?: (id: number) => void;
   attachmentText?: string;
 }
 
 export function useChat(options: UseChatOptions = {}) {
-  const { fileId, conversationId = null, onConversationUpdate, attachmentText } = options;
+  const { fileId, folderId, conversationId = null, onConversationUpdate, attachmentText } = options;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState<number | null>(conversationId);
@@ -68,7 +69,7 @@ export function useChat(options: UseChatOptions = {}) {
         const res = await fetch("/api/ask", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: updatedMessages, fileId, attachmentText }),
+          body: JSON.stringify({ messages: updatedMessages, fileId, folderId, attachmentText }),
           signal: controller.signal,
         });
 
@@ -145,7 +146,7 @@ export function useChat(options: UseChatOptions = {}) {
         setIsLoading(false);
       }
     },
-    [messages, fileId, activeConversationId, onConversationUpdate, attachmentText]
+    [messages, fileId, folderId, activeConversationId, onConversationUpdate, attachmentText]
   );
 
   const clearChat = useCallback(() => {

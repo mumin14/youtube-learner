@@ -9,12 +9,22 @@ import {
   searchChannels,
 } from "@/lib/youtube";
 import { requireAuth } from "@/lib/auth";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
-  const user = requireAuth(req);
+  const user = await requireAuth(req);
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const rl = checkRateLimit(`${user.id}:youtube`, RATE_LIMITS.heavy);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before adding more videos." },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+    );
+  }
+
   const { url } = (await req.json()) as { url: string };
 
   if (!url?.trim()) {
@@ -105,25 +115,12 @@ async function ingestSingleVideo(
     }
 
     const db = getDb();
-    const insertFile = db.prepare(
-      `INSERT INTO files (filename, original_name, size_bytes, status, source_type, youtube_url, video_id, user_id)
-       VALUES (?, ?, ?, 'chunked', 'youtube', ?, ?, ?)`
-    );
-    const insertChunk = db.prepare(
-      `INSERT INTO chunks (file_id, chunk_index, content, token_estimate, start_seconds, end_seconds) VALUES (?, ?, ?, ?, ?, ?)`
-    );
-    const updateFileChunks = db.prepare(
-      `UPDATE files SET chunk_count = ? WHERE id = ?`
-    );
 
     const safeName = `yt-${videoId}`;
-    const info = insertFile.run(
-      safeName,
-      title,
-      Buffer.byteLength(text),
-      originalUrl,
-      videoId,
-      userId
+    const info = await db.run(
+      `INSERT INTO files (filename, original_name, size_bytes, status, source_type, youtube_url, video_id, user_id)
+       VALUES (?, ?, ?, 'chunked', 'youtube', ?, ?, ?)`,
+      safeName, title, Buffer.byteLength(text), originalUrl, videoId, userId
     );
     const fileId = info.lastInsertRowid as number;
 
@@ -131,20 +128,19 @@ async function ingestSingleVideo(
       ? chunkTranscriptSegments(segments, title)
       : chunkText(text, title);
 
-    const tx = db.transaction(() => {
+    await db.transaction(async () => {
       for (let i = 0; i < chunks.length; i++) {
-        insertChunk.run(
-          fileId,
-          i,
-          chunks[i].content,
-          chunks[i].tokenEstimate,
-          chunks[i].startSeconds ?? null,
-          chunks[i].endSeconds ?? null
+        await db.run(
+          `INSERT INTO chunks (file_id, chunk_index, content, token_estimate, start_seconds, end_seconds) VALUES (?, ?, ?, ?, ?, ?)`,
+          fileId, i, chunks[i].content, chunks[i].tokenEstimate,
+          chunks[i].startSeconds ?? null, chunks[i].endSeconds ?? null
         );
       }
-      updateFileChunks.run(chunks.length, fileId);
+      await db.run(
+        `UPDATE files SET chunk_count = ? WHERE id = ?`,
+        chunks.length, fileId
+      );
     });
-    tx();
 
     return {
       id: fileId,
