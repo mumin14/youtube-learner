@@ -25,7 +25,11 @@ export const metadata: Metadata = {
   description:
     "Turn your scattered learning materials into structured daily actions. Upload anything, get action items, and track real comprehension with Socratic questioning.",
   icons: {
-    icon: "/logo.png",
+    icon: [
+      { url: "/favicon.ico", sizes: "32x32" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
   },
   openGraph: {
     title: "Socraty — The learning execution engine",
