@@ -34,12 +34,21 @@ export const metadata: Metadata = {
     url: "https://socraty.ai",
     siteName: "Socraty",
     type: "website",
+    images: [
+      {
+        url: "https://socraty.ai/logo.png",
+        width: 688,
+        height: 128,
+        alt: "Socraty",
+      },
+    ],
   },
   twitter: {
-    card: "summary_large_image",
+    card: "summary",
     title: "Socraty — The learning execution engine",
     description:
       "Turn your scattered learning materials into structured daily actions.",
+    images: ["https://socraty.ai/logo.png"],
   },
 };
 
